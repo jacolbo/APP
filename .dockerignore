@@ -1,0 +1,11 @@
+data/
+node_modules/
+test/
+docs/
+.git/
+.github/
+*.log
+.DS_Store
+README.md
+fly.toml
+render.yaml

@@ -1,11 +1,24 @@
 // End-to-end API test. Starts its own server on a free port with a temporary
 // data directory, exercises every endpoint, then cleans up after itself.
 //   node test/smoke.mjs
+// Set BASE to test a server that is already running (a fresh deployment, say):
+//   BASE=https://poses.example.com ADMIN_PASSWORD=... node test/smoke.mjs
+// It creates a collection, exercises it, then deletes it again.
 import { startServer } from './helpers/server.mjs';
 
-const server = await startServer();
+const server = process.env.BASE
+  ? { base: process.env.BASE, password: process.env.ADMIN_PASSWORD || '', stop: async () => {} }
+  : await startServer();
+
+if (process.env.BASE && !server.password) {
+  console.error('Set ADMIN_PASSWORD as well as BASE so the test can sign in.');
+  process.exit(1);
+}
+
 const BASE = server.base;
 const PASSWORD = server.password;
+
+console.log(`Testing ${BASE}${process.env.BASE ? ' (already running)' : ' (temporary instance)'}`);
 
 let cookie = '';
 let failures = 0;

@@ -1,0 +1,31 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# In Render: New → Blueprint → connect this repo. Render reads this file and
+# creates the service. It will prompt you for ADMIN_PASSWORD (sync: false means
+# the value is never stored in the repo).
+#
+# The disk is what keeps your photos. Disks require a paid instance type, and a
+# service with a disk runs as a single instance with a few seconds of downtime
+# on each redeploy — both fine for this app.
+services:
+  - name: pose-board
+    type: web
+    runtime: docker
+    plan: 0.5c-512mb
+    region: oregon
+    branch: claude/photo-pose-upload-app-7gnots
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: pose-data
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DATA_DIR
+        value: /data
+      - key: NODE_ENV
+        value: production
+      - key: MAX_UPLOAD_MB
+        value: "25"

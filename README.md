@@ -79,21 +79,26 @@ straight away, so keep a backup if you might want them back.
 
 ## Running it where clients can reach it
 
-The app speaks plain HTTP. **Put it behind something that terminates TLS**
-(Caddy, nginx, a Cloudflare tunnel, Fly.io, a Render/Railway app) so links you
-send are `https://`. The server sets the `Secure` flag on the login cookie
-automatically when it sees `X-Forwarded-Proto: https`, so pass that header through.
+`localhost` only exists on your machine, so to send clients a link the app needs
+a host that is always on and gives it a **persistent disk** for the photos.
 
-A minimal Caddy config:
+**[docs/DEPLOY.md](docs/DEPLOY.md) walks through four ways to do that** — Render
+(no command line needed), Fly.io, your own server with Docker, or plain Node
+behind systemd — including backups, updates and troubleshooting. The config each
+one needs is already in the repo:
 
 ```
-poses.example.com {
-    reverse_proxy 127.0.0.1:4000
-}
+Dockerfile                 runs the app as an unprivileged user, data in /data
+render.yaml                Render blueprint: web service + 10 GB disk
+fly.toml                   Fly.io: volume mount, health check, HTTPS
+deploy/poseboard.service   systemd unit for a plain VPS
+deploy/Caddyfile           HTTPS + upload size limit in front of the app
 ```
 
-Run it with `HOST=127.0.0.1 NODE_ENV=production ADMIN_PASSWORD=... npm start`, and
-keep it alive with systemd, pm2, Docker — whatever you already use.
+Whichever you choose, the app speaks plain HTTP and must sit behind something
+that terminates TLS, so the links you send are `https://`. It sets the `Secure`
+flag on the login cookie automatically when it sees `X-Forwarded-Proto: https`,
+so pass that header through.
 
 ## What the security actually is
 
@@ -133,7 +138,13 @@ npm run test:ui # 33 browser checks — needs Playwright
 ```
 
 `npm test` covers auth, uploads, access control, ordering, sharing, PINs, picks
-and deletion, against a real server on a temporary data directory.
+and deletion, against a real server on a temporary data directory. Point it at a
+deployed instance to check a fresh install (it creates and deletes a test
+collection):
+
+```bash
+BASE=https://your-app-url ADMIN_PASSWORD=your-password npm test
+```
 
 The browser suite drives the actual UI in Chromium — sign in, upload three real
 images, edit a pose, publish, open the gallery as a client, heart poses, leave a

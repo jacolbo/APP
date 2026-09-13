@@ -1,0 +1,38 @@
+# systemd unit for running Pose Board directly on a VPS (no Docker).
+#
+#   sudo useradd --system --home /opt/pose-board --shell /usr/sbin/nologin poseboard
+#   sudo git clone -b claude/photo-pose-upload-app-7gnots https://github.com/jacolbo/APP.git /opt/pose-board
+#   sudo mkdir -p /var/lib/pose-board && sudo chown -R poseboard:poseboard /var/lib/pose-board /opt/pose-board
+#   printf 'ADMIN_PASSWORD=your-password\n' | sudo tee /etc/pose-board.env
+#   sudo chmod 600 /etc/pose-board.env
+#   sudo cp /opt/pose-board/deploy/poseboard.service /etc/systemd/system/
+#   sudo systemctl enable --now poseboard
+[Unit]
+Description=Pose Board
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=poseboard
+Group=poseboard
+WorkingDirectory=/opt/pose-board
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=3
+
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=4000
+Environment=DATA_DIR=/var/lib/pose-board
+# Holds ADMIN_PASSWORD=... and is readable only by root.
+EnvironmentFile=/etc/pose-board.env
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pose-board
+
+[Install]
+WantedBy=multi-user.target

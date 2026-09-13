@@ -1,0 +1,41 @@
+# Fly.io configuration — https://fly.io/docs/reference/configuration/
+#
+#   fly launch --no-deploy --copy-config    (pick your own app name + region)
+#   fly volumes create pose_data --size 10
+#   fly secrets set ADMIN_PASSWORD="your-password"
+#   fly deploy
+#
+# Keep this app on ONE machine: each machine gets its own volume, so a second
+# machine would have its own separate, empty photo library.
+app = "pose-board"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  DATA_DIR = "/data"
+  NODE_ENV = "production"
+
+[[mounts]]
+  source = "pose_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

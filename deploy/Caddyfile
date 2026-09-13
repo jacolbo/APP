@@ -1,0 +1,15 @@
+# Put this on a VPS with Caddy installed to get HTTPS automatically.
+# Replace the domain with yours, pointed at the server's IP.
+#
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+poses.example.com {
+    encode zstd gzip
+
+    # Photos are uploaded as raw request bodies; allow room for them.
+    request_body {
+        max_size 30MB
+    }
+
+    reverse_proxy 127.0.0.1:4000
+}
