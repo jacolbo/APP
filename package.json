@@ -1,0 +1,16 @@
+{
+  "name": "pose-board",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Upload pose reference photos into collections and share them with clients through a private link.",
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test/smoke.mjs",
+    "test:ui": "node test/ui.mjs"
+  }
+}

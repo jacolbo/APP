@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Pose Board — Studio</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23101013'/><circle cx='16' cy='16' r='6' fill='%23e5b487'/></svg>">
+</head>
+<body>
+
+  <!-- Sign in -->
+  <div class="centered" id="login-view" hidden>
+    <form class="login-card" id="login-form">
+      <h1>Pose Board</h1>
+      <p class="hint" style="margin-bottom:20px">Your pose library. Sign in to upload and share.</p>
+      <label class="field">
+        <span>Password</span>
+        <input type="password" id="login-password" autocomplete="current-password" required autofocus>
+      </label>
+      <button class="btn btn-primary" type="submit" style="width:100%; justify-content:center">Sign in</button>
+      <p class="hint" id="login-error" style="color:var(--danger)" hidden></p>
+      <p class="hint" id="login-default-warning" hidden>
+        No <code>ADMIN_PASSWORD</code> is set, so the password is <strong>changeme</strong>.
+        Set one before putting this online.
+      </p>
+    </form>
+  </div>
+
+  <!-- Studio -->
+  <div id="app-view" hidden>
+    <header class="topbar">
+      <div class="wrap topbar-inner">
+        <h1 class="brand"><span class="dot"></span> Pose Board</h1>
+        <span class="spacer"></span>
+        <button class="btn btn-sm btn-ghost" id="nav-home" hidden>← All collections</button>
+        <button class="btn btn-sm btn-primary" id="new-collection">+ New collection</button>
+        <button class="btn btn-sm btn-ghost" id="logout">Sign out</button>
+      </div>
+    </header>
+
+    <main class="wrap" style="padding-block: 26px 60px">
+      <p class="badge warn" id="default-password-banner" hidden style="margin-bottom:18px">
+        ⚠ Running with the default password — set ADMIN_PASSWORD before sharing this online.
+      </p>
+
+      <!-- Dashboard -->
+      <section id="dashboard-view" hidden>
+        <div class="row" style="margin-bottom:18px">
+          <h2 style="font-family:var(--serif); font-size:22px; margin:0">Collections</h2>
+          <span class="spacer"></span>
+          <input type="search" id="collection-search" placeholder="Search collections…" style="max-width:240px">
+        </div>
+        <div class="cards" id="collection-cards"></div>
+        <div class="empty" id="dashboard-empty" hidden>
+          <p style="margin:0 0 12px"><strong>No collections yet.</strong></p>
+          <p class="small" style="margin:0 0 16px">Make one for a shoot, a style, or a single client — then drop your pose ideas in.</p>
+          <button class="btn btn-primary" id="empty-new-collection">+ New collection</button>
+        </div>
+      </section>
+
+      <!-- One collection -->
+      <section id="collection-view" hidden>
+        <div class="row" style="align-items:flex-start; margin-bottom:6px">
+          <div style="min-width:0">
+            <h2 id="collection-title" style="font-family:var(--serif); font-size:26px; margin:0 0 4px; overflow-wrap:anywhere"></h2>
+            <p class="muted small" id="collection-subtitle" style="margin:0"></p>
+          </div>
+          <span class="spacer"></span>
+          <div class="row">
+            <span class="badge" id="collection-status"></span>
+            <button class="btn btn-sm" id="collection-settings">Settings</button>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top:18px">
+          <h2>Share with your client</h2>
+          <label class="switch" style="margin-bottom:12px">
+            <input type="checkbox" id="publish-toggle">
+            <span>Gallery is live — anyone with the link can view it</span>
+          </label>
+          <div class="share-link">
+            <input type="text" id="share-url" readonly aria-label="Share link">
+            <button class="btn btn-sm" id="copy-share">Copy</button>
+          </div>
+          <p class="hint" id="share-hint"></p>
+        </div>
+
+        <div class="panel">
+          <h2>Add poses</h2>
+          <div class="dropzone" id="dropzone">
+            <strong>Drop photos here</strong>
+            <span class="small">or</span>
+            <button class="btn btn-sm" id="pick-files" style="margin-left:6px">Choose files</button>
+            <p class="hint" id="upload-hint" style="margin-top:10px"></p>
+            <div class="progress" id="upload-progress" hidden><i></i></div>
+          </div>
+          <input type="file" id="file-input" accept="image/*" multiple hidden>
+        </div>
+
+        <div class="row" style="margin:26px 0 14px">
+          <h2 style="font-family:var(--serif); font-size:20px; margin:0">Poses <span class="muted" id="photo-count"></span></h2>
+          <span class="spacer"></span>
+          <label class="switch small"><input type="checkbox" id="only-picked"><span>Only client picks</span></label>
+        </div>
+
+        <div class="photo-grid" id="photo-grid"></div>
+        <div class="empty" id="collection-empty" hidden>
+          <p style="margin:0"><strong>No poses in here yet.</strong></p>
+          <p class="small" style="margin:8px 0 0">Drop your reference photos above — drag them afterwards to set the order your client sees.</p>
+        </div>
+
+        <div class="panel" id="picks-panel" hidden style="margin-top:26px">
+          <h2>What your client picked</h2>
+          <div id="picks-summary" class="stack"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+  <script src="/admin.js" type="module"></script>
+</body>
+</html>

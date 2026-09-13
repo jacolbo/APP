@@ -1,0 +1,5 @@
+# Uploaded photos, database and session key live here — never commit them.
+data/
+node_modules/
+*.log
+.DS_Store
