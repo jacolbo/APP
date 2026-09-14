@@ -129,6 +129,18 @@ check('non-image upload rejected', badType.status === 415);
 const reorder = await call(`/api/tabs/${previewTab.id}/order`, { method: 'POST', body: { ids: [preview2.id, preview1.id] } });
 check('images reorder', reorder.data.images[0].id === preview2.id);
 
+console.log('\n— every folder keeps a public tab —');
+const rules = (await call('/api/folders', { method: 'POST', body: { title: 'Tab rules' } })).data;
+const onlyOpen = rules.tabs.find((t) => t.access === 'open');
+check('cannot lock the last open tab', (await call(`/api/tabs/${onlyOpen.id}`, { method: 'PATCH', body: { access: 'pin' } })).status === 400);
+check('cannot delete the last open tab', (await call(`/api/tabs/${onlyOpen.id}`, { method: 'DELETE' })).status === 400);
+check('a second open tab is allowed', (await call(`/api/folders/${rules.folder.id}/tabs`, { method: 'POST', body: { title: 'More', access: 'open' } })).status === 201);
+check('with two open, the first can be locked', (await call(`/api/tabs/${onlyOpen.id}`, { method: 'PATCH', body: { access: 'pin' } })).status === 200);
+const bare = (await call('/api/folders', { method: 'POST', body: { title: 'Bare', withDefaultTabs: false } })).data.folder;
+check('a first tab cannot be PIN-only', (await call(`/api/folders/${bare.id}/tabs`, { method: 'POST', body: { title: 'Secret', access: 'pin' } })).status === 400);
+await call(`/api/folders/${rules.folder.id}`, { method: 'DELETE' });
+await call(`/api/folders/${bare.id}`, { method: 'DELETE' });
+
 console.log('\n— publishing —');
 const link = gallery.uniqueLink;
 check('draft gallery is not reachable', (await call(`/api/g/${link}`, { as: 'client' })).status === 404);
@@ -167,6 +179,18 @@ check('locked image cannot be favourited', sneaky.status === 404, String(sneaky.
 const unpick = await call(`/api/g/${link}/select`, { method: 'POST', as: 'client', body: { imageId: preview1.id, clientSessionId: 'sess-a', selected: false } });
 check('favourite removed', unpick.data.selected === false && unpick.data.totalSelected === 0);
 await call(`/api/g/${link}/select`, { method: 'POST', as: 'client', body: { imageId: preview1.id, clientSessionId: 'sess-a', selected: true } });
+
+console.log('\n— who picked —');
+const badEmail = await call(`/api/g/${link}/identify`, { method: 'POST', as: 'client', body: { clientSessionId: 'sess-a', clientEmail: 'not-an-email' } });
+check('a malformed email is refused', badEmail.status === 400, String(badEmail.status));
+const identified = await call(`/api/g/${link}/identify`, { method: 'POST', as: 'client', body: { clientSessionId: 'sess-a', clientName: 'Ana', clientEmail: '  Ana@Example.COM ' } });
+check('identity lands on picks already made', identified.status === 200 && identified.data.updated >= 1, JSON.stringify(identified.data));
+const studioView = await call(`/api/folders/${gallery.id}`);
+check('the studio sees the email, normalised', studioView.data.selections.some((s) => s.clientEmail === 'ana@example.com'));
+check('restore refuses an email that never picked', (await call(`/api/g/${link}/restore`, { method: 'POST', as: 'client', body: { clientEmail: 'someone@else.test' } })).status === 404);
+const restored = await call(`/api/g/${link}/restore`, { method: 'POST', as: 'client', body: { clientEmail: 'ana@example.com' } });
+check('restore hands back the original session', restored.status === 200 && restored.data.clientSessionId === 'sess-a', JSON.stringify(restored.data));
+check('restore reports how many picks are waiting', restored.data.total >= 1);
 
 console.log('\n— downloads and the PIN —');
 check('preview is viewable', (await call(`/i/${preview1.id}`, { as: 'client' })).status === 200);
@@ -209,6 +233,7 @@ check('webhook carries the selected file names', Array.isArray(payload?.selected
   && payload.selected_files.includes('preview-01.png')
   && payload.selected_files.includes('FINAL-0041.png'), JSON.stringify(payload?.selected_files));
 check('webhook names the tab each file came from', payload?.selections?.some((s) => s.tab === 'Final images'));
+check('webhook carries the client email', payload?.clientEmail === 'ana@example.com', JSON.stringify(payload?.clientEmail));
 
 hook.answerWith(500);
 const failed = await call(`/api/g/${link}/handoff`, { method: 'POST', as: 'client', body: { clientSessionId: 'sess-a' } });
@@ -227,6 +252,19 @@ check('tab locks again after signing out of the PIN', relocked.data.tabs.find((t
 check('a favourite in a locked tab is kept but URL-free', relocked.data.favorites.some((f) => f.locked === true && !f.url));
 check('locked image hidden again', (await call(`/d/${deliverable.id}`, { as: 'client' })).status === 404);
 check('visible download asks for the PIN again', (await call(`/d/${proof.id}`, { as: 'client' })).status === 401);
+
+console.log('\n— PIN use limit —');
+check('a silly limit is refused', (await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { downloadPinMaxUses: -3 } })).status === 400);
+const capped = await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { downloadPinMaxUses: 1 } });
+check('limit set, and the earlier unlock already counted', capped.data.folder.pinMaxUses === 1 && capped.data.folder.pinUses === 1, JSON.stringify(capped.data.folder.pinUses));
+const spent = await call(`/api/g/${link}/unlock`, { method: 'POST', as: 'client', body: { pin: '4821' } });
+check('the right PIN is refused once its limit is spent', spent.status === 429, String(spent.status));
+await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { resetPinUses: true } });
+const afterReset = await call(`/api/g/${link}/unlock`, { method: 'POST', as: 'client', body: { pin: '4821' } });
+check('resetting the counter lets it through again', afterReset.status === 200 && afterReset.data.usesLeft === 0, JSON.stringify(afterReset.data));
+const newPin = await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { downloadPin: '5678' } });
+check('a new PIN starts on a fresh count', newPin.data.folder.pinUses === 0);
+check('the old PIN stops working', (await call(`/api/g/${link}/unlock`, { method: 'POST', as: 'client', body: { pin: '4821' } })).status === 401);
 
 console.log('\n— resetting the link —');
 const relink = await call(`/api/folders/${gallery.id}/relink`, { method: 'POST' });

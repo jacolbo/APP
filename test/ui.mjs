@@ -126,6 +126,15 @@ check('the private image is absent from the page', leaked === false);
 await client.click('#image-grid .tile:first-child .tile-open');
 await client.waitForFunction(() => document.querySelectorAll('#favorites-strip .fav-chip').length === 1);
 check('clicking an image favourites it', (await client.$$('#favorites-strip .fav-chip')).length === 1);
+
+// The first pick asks who it belongs to — optional, but it is what turns an
+// anonymous session into something the studio can act on.
+await client.waitForSelector('.modal-card input[autocomplete=name]', { timeout: 10000 });
+check('asked who the picks belong to, after the first one', true);
+await client.fill('.modal-card input[autocomplete=name]', 'Ana');
+await client.fill('.modal-card input[autocomplete=email]', 'ana@example.com');
+await client.click('.modal-card button[type=submit]');
+await client.waitForSelector('.modal-card', { state: 'detached' });
 check('send button appears with a favourite', await client.isVisible('#send-button'));
 
 await client.reload();
@@ -138,6 +147,36 @@ await client.waitForFunction(() => document.querySelectorAll('#favorites-strip .
 check('a favourite can be removed from the favourites strip', (await client.$$('#favorites-strip .fav-chip')).length === 0);
 await client.click('#image-grid .tile:first-child .tile-open');
 await client.waitForFunction(() => document.querySelectorAll('#favorites-strip .fav-chip').length === 1);
+const askedTwice = await client.$('.modal-card input[autocomplete=name]');
+check('it does not ask a second time', askedTwice === null);
+
+console.log('\n— picking up on another device —');
+const otherDevice = await browser.newContext({ viewport: { width: 1320, height: 950 } });
+const other = await otherDevice.newPage();
+other.on('pageerror', (err) => errors.push(`restore: ${err.message}`));
+await other.goto(shareUrl);
+await other.waitForSelector('#gallery-view:not([hidden])');
+check('a fresh browser starts with no favourites', (await other.$$('#favorites-strip .fav-chip')).length === 0);
+check('it offers to find earlier picks', await other.isVisible('#restore-button'));
+await other.click('#restore-button');
+await other.waitForSelector('.modal-card input[autocomplete=email]');
+await other.fill('.modal-card input[autocomplete=email]', 'nobody@example.test');
+await other.click('.modal-card button[type=submit]');
+await other.waitForSelector('.modal-card .hint[style*="danger"]:not([hidden])');
+check('an unknown email is refused', true);
+await other.fill('.modal-card input[autocomplete=email]', 'ana@example.com');
+await other.click('.modal-card button[type=submit]');
+await other.waitForFunction(() => document.querySelectorAll('#favorites-strip .fav-chip').length === 1, null, { timeout: 10000 });
+check('the same email brings the picks back on another device', (await other.$$('#favorites-strip .fav-chip')).length === 1);
+await otherDevice.close();
+
+console.log('\n— the studio sees who picked —');
+await page.reload();
+await page.waitForSelector('#app-view:not([hidden])');
+await page.click('#root-cards .card:first-child');
+await page.waitForSelector('#folder-view:not([hidden])');
+const whoPicked = await page.textContent('#selections-summary');
+check('the studio shows the name and email, not a session id', whoPicked.includes('Ana') && whoPicked.includes('ana@example.com'), whoPicked.slice(0, 120));
 
 console.log('\n— the PIN gate —');
 await client.click('#tabbar .tab:nth-child(2)');

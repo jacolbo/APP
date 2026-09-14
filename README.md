@@ -63,7 +63,7 @@ work, but that older floor is declared rather than tested here.
    for every folder at once.
 6. **Publish and share** — flip *Gallery is live*, copy the link, send it.
 7. **Read their picks** — hearts show up on your tiles and a panel at the bottom
-   lists every pick by client.
+   lists every pick by client, with their name and email if they gave one.
 
 Unpublishing takes the link offline immediately. **Reset share link** (in
 Settings) issues a new link and permanently kills the old one.
@@ -137,6 +137,7 @@ folder's webhook URL (or `WEBHOOK_URL`):
   "galleryId": "fld_xxxxxxxxxxxx",
   "galleryTitle": "Smith Wedding",
   "clientName": "Ana",
+  "clientEmail": "ana@example.com",
   "total_selected": 2,
   "selected_files": ["IMG_0041.jpg", "IMG_0052.jpg"],
   "selections": [
@@ -152,6 +153,39 @@ unreachable host all show the client an error saying nothing was sent — they a
 never told it worked when it did not. There is no automatic retry; the client can
 press the button again, and a silent retry risks you seeing the same selection
 twice. Handoffs are rate limited to 6 per 15 minutes per client.
+
+## How favourites are tied to a person
+
+There are no client accounts. A random id in the browser's local storage is what
+links a set of favourites to one visitor, so a refresh — or coming back tomorrow
+on the same browser — keeps them.
+
+After their first pick the gallery asks, once, for a name and email. **It is
+skippable and the gallery works without it**, but giving it does two things:
+
+- your picks panel and the handoff webhook show *who* picked, instead of an
+  anonymous session id
+- the same person can open the gallery on another device, press **Picked on
+  another device?**, give the same email, and get their list back
+
+**The trade-off, stated plainly:** that second one means anyone who already has
+the gallery link and correctly guesses a client's email address can pull up that
+client's picks. There is no email verification — sending a confirmation link
+would need an outbound mail service, which this app deliberately does not have.
+The lookup is rate limited to 8 tries per 15 minutes per address per gallery, and
+it returns nothing but the picks. If that trade is wrong for you, remove the
+`/restore` route in `lib/api.js`; recording the email still works without it.
+
+## Rules the app enforces for you
+
+- **A folder that has tabs must keep at least one open to anyone with the link.**
+  Lock every tab and a client who has not been given the PIN sees an empty
+  gallery with nothing explaining why, so the app refuses the change.
+- **A download PIN can have a use limit.** Set one in *Settings* if you would
+  rather a PIN did not get passed around; each accepted unlock spends one use,
+  and a wrong PIN never does. Setting a new PIN resets the count, and you can
+  reset it by hand.
+- **Nothing downloads without a PIN.** There is no "downloads are open" mode.
 
 ## What the security actually is
 
@@ -184,8 +218,11 @@ Stated plainly, so you can decide what to put in it:
   image URL** — an unguessable id, not listed anywhere. Draft folders are only
   readable while signed in, and a draft folder hides everything beneath it.
 - **Client selections are not authenticated.** A client is remembered by a random
-  id in their browser's local storage. Anyone with the link can heart an image.
-  It is a shortlisting tool, not a signature.
+  id in their browser's local storage, and any name or email they type is taken
+  at face value — nothing is verified. Anyone with the link can heart an image
+  under any name. It is a shortlisting tool, not a signature. See *How
+  favourites are tied to a person* above for what restore-by-email does and does
+  not protect.
 - **No HTTPS on its own.** Without a proxy in front, the password and PIN travel
   in the clear. Don't skip the TLS step.
 - **No antivirus/content scanning** of uploads, and no EXIF stripping — files are
@@ -199,14 +236,15 @@ multi-tenant service.
 ## Tests
 
 ```bash
-npm test          # 85 API checks + 17 migration checks — starts its own server
-npm run test:ui   # 34 browser checks — needs Playwright
+npm test          # 103 API checks + 17 migration checks — starts its own server
+npm run test:ui   # 41 browser checks — needs Playwright
 ```
 
 `npm test` covers auth, the folder tree (including the depth cap and the
 cannot-move-a-folder-inside-itself rule), tabs, uploads, publishing, favourites,
-the PIN gate, downloads and the handoff webhook — the last against a real local
-HTTP receiver, not a stub. It asserts directly that a locked tab's image ids
+the PIN gate and its use limit, downloads, identifying a client and restoring
+their picks, and the handoff webhook — the last against a real local HTTP
+receiver, not a stub. It asserts directly that a locked tab's image ids
 never appear in a page load. A second suite migrates a real v1 `db.json` and
 checks the old share link, files and picks all survive.
 
@@ -219,9 +257,10 @@ BASE=https://your-app-url ADMIN_PASSWORD=your-password npm test
 
 The browser suite drives the actual UI in Chromium — sign in, build a nested
 folder, upload real images into two tabs, publish, then open the gallery as a
-client: favourite, refresh to prove it persisted, hit the PIN gate with a wrong
-then a right PIN, download a file, hand the selection over, and confirm a failing
-webhook never claims success. It also checks the phone layout. It skips itself
+client: favourite, answer the who-are-you prompt, refresh to prove it persisted,
+restore the same picks in a second browser from the email alone, hit the PIN gate
+with a wrong then a right PIN, download a file, hand the selection over, and
+confirm a failing webhook never claims success. It also checks the phone layout. It skips itself
 with a note if Playwright is not installed:
 
 ```bash

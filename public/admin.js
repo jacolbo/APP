@@ -286,6 +286,9 @@ function renderTabs() {
 
   const warning = $('#tab-warning');
   const noPin = !state.folder.hasPin && !state.folder.inheritsPin;
+  $('#delete-tab').disabled = state.tabs.length > 1
+    && tab.access === 'open'
+    && state.tabs.filter((entry) => entry.access === 'open').length === 1;
   if (noPin && tab.access === 'pin') {
     warning.textContent = 'No download PIN is set, so this tab can never be opened by a client. Set one in Settings.';
     warning.hidden = false;
@@ -394,8 +397,10 @@ function renderSelections() {
 
   $('#selections-summary').replaceChildren(...[...bySession.entries()].map(([sessionId, picks]) => h('div', {}, [
     h('p', { style: 'margin:0 0 6px' }, [
-      h('strong', { text: picks[0].clientName || 'A client' }),
-      h('span', { class: 'muted small', text: ` · ${picks.length} pick${picks.length === 1 ? '' : 's'} · ${sessionId.slice(0, 8)}` }),
+      h('strong', { text: picks[0].clientName || picks[0].clientEmail || 'A client' }),
+      // The email is there only if they chose to give it, so fall back to the
+      // session id rather than pretending we know who this is.
+      h('span', { class: 'muted small', text: ` · ${picks.length} pick${picks.length === 1 ? '' : 's'} · ${picks.find((p) => p.clientEmail)?.clientEmail || `unnamed visitor ${sessionId.slice(0, 8)}`}` }),
     ]),
     h('div', { class: 'row' }, picks.map((pick) => h('span', {
       class: 'tag',
@@ -532,6 +537,11 @@ function openSettings() {
   const clientName = h('input', { type: 'text', value: folder.clientName || '', placeholder: 'Ana & Tom' });
   const description = h('textarea', { placeholder: 'A note shown at the top of your client’s gallery' }, [folder.description || '']);
   const pin = h('input', { type: 'text', inputmode: 'numeric', placeholder: folder.hasPin ? 'Set — type a new one to change it' : '4–12 digits' });
+  const pinMax = h('input', {
+    type: 'number', min: '1', max: '10000',
+    value: folder.pinMaxUses === null ? '' : String(folder.pinMaxUses),
+    placeholder: 'No limit',
+  });
   const webhook = h('input', { type: 'text', value: folder.webhookUrl || '', placeholder: 'https://studio.example.com/hooks/selection' });
   let close;
 
@@ -544,6 +554,7 @@ function openSettings() {
     };
     // Left blank means "leave it alone"; the Clear button is how you remove it.
     if (pin.value.trim()) body.downloadPin = pin.value.trim();
+    body.downloadPinMaxUses = pinMax.value.trim() ? Number(pinMax.value.trim()) : null;
     try {
       await api(`/api/folders/${folder.id}`, { method: 'PATCH', body });
       close();
@@ -563,6 +574,20 @@ function openSettings() {
     h('p', { class: 'hint', text: folder.inheritsPin
       ? 'Blank means this folder keeps using the PIN from a folder above it.'
       : 'Clients type this before they can download, or open a PIN-only tab. Nothing downloads without one.' }),
+    h('label', { class: 'field' }, [h('span', { text: 'Limit how many times the PIN can be used' }), pinMax]),
+    h('p', { class: 'hint' }, [
+      folder.hasPin
+        ? `Used ${folder.pinUses} time${folder.pinUses === 1 ? '' : 's'} so far${folder.pinMaxUses === null ? '' : ` of ${folder.pinMaxUses}`}. `
+        : '',
+      'Blank means no limit. Useful if you would rather a PIN did not get passed around. Setting a new PIN resets the count.',
+      folder.pinUses > 0 && h('button', {
+        type: 'button',
+        class: 'btn btn-sm',
+        style: 'margin-left:8px',
+        text: 'Reset count',
+        onclick: async () => { close(); await patchFolder({ resetPinUses: true }, 'Use count reset'); },
+      }),
+    ]),
     h('label', { class: 'field' }, [h('span', { text: 'Send selections to (webhook URL)' }), webhook]),
     h('p', { class: 'hint', text: 'Where "Send to photographer" POSTs the shortlist. Blank uses the WEBHOOK_URL the server was started with, if any.' }),
     h('div', { class: 'modal-actions' }, [

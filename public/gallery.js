@@ -15,6 +15,9 @@ const state = {
   favorites: [],
   activeTabId: null,
   sessionId: '',
+  clientName: '',
+  clientEmail: '',
+  askedIdentity: false,
   pending: new Set(), // image ids with a save in flight
 };
 
@@ -54,16 +57,28 @@ function toast(message, isError = false) {
 
 const storageKey = `poseboard:gallery:${link}`;
 
+function saveSession() {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify({
+      sessionId: state.sessionId,
+      clientName: state.clientName,
+      clientEmail: state.clientEmail,
+      askedIdentity: state.askedIdentity,
+    }));
+  } catch { /* private mode: favourites still work, just not across visits */ }
+}
+
 function loadSession() {
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey) || '{}');
     if (typeof saved.sessionId === 'string') state.sessionId = saved.sessionId;
+    if (typeof saved.clientName === 'string') state.clientName = saved.clientName;
+    if (typeof saved.clientEmail === 'string') state.clientEmail = saved.clientEmail;
+    state.askedIdentity = saved.askedIdentity === true;
   } catch { /* private mode: favourites still work, just not across visits */ }
   if (!state.sessionId) {
     state.sessionId = (crypto.randomUUID?.() || `${Math.random().toString(36).slice(2)}${Date.now()}`).replace(/-/g, '');
-    try {
-      localStorage.setItem(storageKey, JSON.stringify({ sessionId: state.sessionId }));
-    } catch { /* ignore */ }
+    saveSession();
   }
 }
 
@@ -128,8 +143,17 @@ async function toggleFavorite(image, force) {
   try {
     await api('/select', {
       method: 'POST',
-      body: { imageId: image.id, clientSessionId: state.sessionId, selected: next },
+      body: {
+        imageId: image.id,
+        clientSessionId: state.sessionId,
+        selected: next,
+        clientName: state.clientName,
+        clientEmail: state.clientEmail,
+      },
     });
+    // Ask once, after the pick has actually saved, so the dialog never appears
+    // over a favourite that then fails.
+    if (next && !state.askedIdentity && !state.clientEmail) await askWhoYouAre();
   } catch (err) {
     state.favorites = previous;
     render();
@@ -137,6 +161,112 @@ async function toggleFavorite(image, force) {
   } finally {
     state.pending.delete(image.id);
   }
+}
+
+// ---------- telling the photographer who you are ----------
+//
+// Entirely optional: the gallery works without it. But a name and email turn
+// "someone picked 12 photos" into something the studio can act on, and let the
+// same person pick these back up on another device.
+
+function identityDialog({ title, blurb, fields, submitText, onSubmit, skipText }) {
+  return new Promise((resolve) => {
+    const error = h('p', { class: 'hint', style: 'color:var(--danger)', hidden: true });
+    const inputs = fields.map((field) => h('input', {
+      type: field.type || 'text',
+      value: field.value || '',
+      placeholder: field.placeholder || '',
+      autocomplete: field.autocomplete || 'off',
+    }));
+    let busy = false;
+    const close = (value) => { modal.remove(); resolve(value); };
+
+    const submit = async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      busy = true;
+      error.hidden = true;
+      try {
+        await onSubmit(Object.fromEntries(fields.map((field, i) => [field.name, inputs[i].value.trim()])));
+        close(true);
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+      } finally {
+        busy = false;
+      }
+    };
+
+    const form = h('form', { class: 'modal-card', onsubmit: submit }, [
+      h('h2', { text: title }),
+      h('p', { class: 'hint', style: 'margin-bottom:16px', text: blurb }),
+      ...fields.map((field, i) => h('label', { class: 'field' }, [h('span', { text: field.label }), inputs[i]])),
+      error,
+      h('div', { class: 'modal-actions' }, [
+        h('button', { type: 'button', class: 'btn', text: skipText || 'Cancel', onclick: () => close(false) }),
+        h('button', { type: 'submit', class: 'btn btn-primary', text: submitText }),
+      ]),
+    ]);
+
+    const modal = h('div', {
+      class: 'modal',
+      onclick: (event) => { if (event.target === modal) close(false); },
+    }, [form]);
+
+    document.addEventListener('keydown', function onKey(event) {
+      if (event.key === 'Escape' && document.body.contains(modal)) close(false);
+      if (!document.body.contains(modal)) document.removeEventListener('keydown', onKey);
+    });
+
+    $('#modal-root').append(modal);
+    inputs[0].focus();
+  });
+}
+
+/** Asked once, after the first pick, and never again whether they answer or not. */
+async function askWhoYouAre() {
+  state.askedIdentity = true;
+  saveSession();
+  await identityDialog({
+    title: 'Who should these go to?',
+    blurb: 'So your photographer knows whose picks these are. You can skip this — your favourites are saved either way.',
+    skipText: 'Skip',
+    submitText: 'Save',
+    fields: [
+      { name: 'clientName', label: 'Your name', placeholder: 'Ana', autocomplete: 'name' },
+      { name: 'clientEmail', label: 'Email', type: 'email', placeholder: 'ana@example.com', autocomplete: 'email' },
+    ],
+    onSubmit: async ({ clientName, clientEmail }) => {
+      if (!clientName && !clientEmail) return;
+      await api('/identify', {
+        method: 'POST',
+        body: { clientSessionId: state.sessionId, clientName, clientEmail },
+      });
+      state.clientName = clientName;
+      state.clientEmail = clientEmail;
+      saveSession();
+      toast('Thanks — your photographer will know these are yours');
+    },
+  });
+}
+
+/** Picks live in this browser; the email is how they are found from another one. */
+async function restorePicks() {
+  const done = await identityDialog({
+    title: 'Pick up where you left off',
+    blurb: 'If you favourited photos here before on another device, enter the same email address.',
+    submitText: 'Find my picks',
+    fields: [{ name: 'clientEmail', label: 'Email', type: 'email', value: state.clientEmail, autocomplete: 'email' }],
+    onSubmit: async ({ clientEmail }) => {
+      const result = await api('/restore', { method: 'POST', body: { clientEmail } });
+      state.sessionId = result.clientSessionId;
+      state.clientEmail = clientEmail.toLowerCase();
+      saveSession();
+    },
+  });
+  if (!done) return;
+  await load(state.folder.id);
+  toast(`Found ${state.favorites.length} pick${state.favorites.length === 1 ? '' : 's'}`);
 }
 
 // ---------- the PIN gate ----------
@@ -372,6 +502,8 @@ function renderFavorites() {
   $('#top-count').textContent = String(count);
   $('#favorites-empty').hidden = count > 0;
 
+  $('#restore-button').hidden = count > 0;
+
   const send = $('#send-button');
   // Hidden entirely when the studio has not set a handoff address, rather
   // than showing a button that cannot work.
@@ -538,6 +670,7 @@ async function start() {
     $('#favorites-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
   $('#send-button').addEventListener('click', sendToPhotographer);
+  $('#restore-button').addEventListener('click', restorePicks);
   $('#lock-button').addEventListener('click', async () => {
     await api('/lock', { method: 'POST' });
     await load(state.folder.id);
