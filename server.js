@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { Store } from './lib/store.js';
 import { createApi } from './lib/api.js';
+import { isValidWebhookUrl } from './lib/webhook.js';
 import { sendError, sendJson } from './lib/util.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -28,6 +29,8 @@ const config = {
   dataDir: path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data')),
   adminPassword: process.env.ADMIN_PASSWORD || '',
   maxUploadBytes: Math.max(1, Number(process.env.MAX_UPLOAD_MB || 25)) * 1024 * 1024,
+  webhookUrl: process.env.WEBHOOK_URL || '',
+  webhookSecret: process.env.WEBHOOK_SECRET || '',
   usingDefaultPassword: false,
 };
 
@@ -38,6 +41,11 @@ if (!config.adminPassword) {
   }
   config.adminPassword = 'changeme';
   config.usingDefaultPassword = true;
+}
+
+if (config.webhookUrl && !isValidWebhookUrl(config.webhookUrl)) {
+  console.error(`Refusing to start: WEBHOOK_URL is not a valid http(s) URL (${config.webhookUrl}).`);
+  process.exit(1);
 }
 
 /** Persisted so that signing in survives a restart. Delete it to sign out everywhere. */
@@ -103,10 +111,11 @@ async function main() {
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (url.pathname === '/health') return sendJson(res, 200, { ok: true });
         if (url.pathname === '/') return serveFile(req, res, path.join(PUBLIC_DIR, 'index.html'));
-        if (url.pathname === '/s' || url.pathname.startsWith('/s/')) {
-          return serveFile(req, res, path.join(PUBLIC_DIR, 'share.html'));
+        // `/s/` is where links generated before the folder rewrite pointed.
+        if (/^\/(g|s)(\/|$)/.test(url.pathname)) {
+          return serveFile(req, res, path.join(PUBLIC_DIR, 'gallery.html'));
         }
-        const image = /^\/(f|t)\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
+        const image = /^\/(i|t|d)\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
         if (image) return await api.serveImage(req, res, image[1], image[2]);
         return serveStatic(req, res, url.pathname);
       }
@@ -125,6 +134,7 @@ async function main() {
     console.log(`  Pose Board is running → http://${shown}:${config.port}`);
     console.log(`  Photos and data       → ${config.dataDir}`);
     console.log(`  Max upload per photo  → ${Math.round(config.maxUploadBytes / (1024 * 1024))} MB`);
+    console.log(`  Handoff webhook       → ${config.webhookUrl || 'not set (per-folder URLs still work)'}`);
     if (config.usingDefaultPassword) {
       console.log('');
       console.log('  ⚠  ADMIN_PASSWORD is not set, so the password is "changeme".');
