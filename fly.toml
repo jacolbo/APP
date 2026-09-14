@@ -3,6 +3,7 @@
 #   fly launch --no-deploy --copy-config    (pick your own app name + region)
 #   fly volumes create pose_data --size 10
 #   fly secrets set ADMIN_PASSWORD="your-password"
+#   fly secrets set WEBHOOK_URL="https://studio.example.com/hooks/selection"   (optional)
 #   fly deploy
 #
 # Keep this app on ONE machine: each machine gets its own volume, so a second

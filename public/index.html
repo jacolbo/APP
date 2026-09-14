@@ -14,7 +14,7 @@
   <div class="centered" id="login-view" hidden>
     <form class="login-card" id="login-form">
       <h1>Pose Board</h1>
-      <p class="hint" style="margin-bottom:20px">Your pose library. Sign in to upload and share.</p>
+      <p class="hint" style="margin-bottom:20px">Your client galleries. Sign in to upload and share.</p>
       <label class="field">
         <span>Password</span>
         <input type="password" id="login-password" autocomplete="current-password" required autofocus>
@@ -34,8 +34,8 @@
       <div class="wrap topbar-inner">
         <h1 class="brand"><span class="dot"></span> Pose Board</h1>
         <span class="spacer"></span>
-        <button class="btn btn-sm btn-ghost" id="nav-home" hidden>← All collections</button>
-        <button class="btn btn-sm btn-primary" id="new-collection">+ New collection</button>
+        <button class="btn btn-sm btn-ghost" id="nav-home" hidden>← All folders</button>
+        <button class="btn btn-sm btn-primary" id="new-folder">+ New folder</button>
         <button class="btn btn-sm btn-ghost" id="logout">Sign out</button>
       </div>
     </header>
@@ -45,32 +45,34 @@
         ⚠ Running with the default password — set ADMIN_PASSWORD before sharing this online.
       </p>
 
-      <!-- Dashboard -->
-      <section id="dashboard-view" hidden>
+      <!-- All top-level folders -->
+      <section id="root-view" hidden>
         <div class="row" style="margin-bottom:18px">
-          <h2 style="font-family:var(--serif); font-size:22px; margin:0">Collections</h2>
+          <h2 style="font-family:var(--serif); font-size:22px; margin:0">Folders</h2>
           <span class="spacer"></span>
-          <input type="search" id="collection-search" placeholder="Search collections…" style="max-width:240px">
+          <input type="search" id="folder-search" placeholder="Search folders…" style="max-width:240px">
         </div>
-        <div class="cards" id="collection-cards"></div>
-        <div class="empty" id="dashboard-empty" hidden>
-          <p style="margin:0 0 12px"><strong>No collections yet.</strong></p>
-          <p class="small" style="margin:0 0 16px">Make one for a shoot, a style, or a single client — then drop your pose ideas in.</p>
-          <button class="btn btn-primary" id="empty-new-collection">+ New collection</button>
+        <div class="cards" id="root-cards"></div>
+        <div class="empty" id="root-empty" hidden>
+          <p style="margin:0 0 12px"><strong>No folders yet.</strong></p>
+          <p class="small" style="margin:0 0 16px">Make one per shoot or client. Each folder gets a Previews tab and a PIN-protected Final images tab, and can hold folders of its own.</p>
+          <button class="btn btn-primary" id="empty-new-folder">+ New folder</button>
         </div>
       </section>
 
-      <!-- One collection -->
-      <section id="collection-view" hidden>
+      <!-- One folder -->
+      <section id="folder-view" hidden>
+        <nav class="crumbs" id="admin-crumbs" aria-label="Folders"></nav>
+
         <div class="row" style="align-items:flex-start; margin-bottom:6px">
           <div style="min-width:0">
-            <h2 id="collection-title" style="font-family:var(--serif); font-size:26px; margin:0 0 4px; overflow-wrap:anywhere"></h2>
-            <p class="muted small" id="collection-subtitle" style="margin:0"></p>
+            <h2 id="folder-title" style="font-family:var(--serif); font-size:26px; margin:0 0 4px; overflow-wrap:anywhere"></h2>
+            <p class="muted small" id="folder-subtitle" style="margin:0"></p>
           </div>
           <span class="spacer"></span>
           <div class="row">
-            <span class="badge" id="collection-status"></span>
-            <button class="btn btn-sm" id="collection-settings">Settings</button>
+            <span class="badge" id="folder-status"></span>
+            <button class="btn btn-sm" id="folder-settings">Settings</button>
           </div>
         </div>
 
@@ -78,7 +80,7 @@
           <h2>Share with your client</h2>
           <label class="switch" style="margin-bottom:12px">
             <input type="checkbox" id="publish-toggle">
-            <span>Gallery is live — anyone with the link can view it</span>
+            <span>Gallery is live — anyone with the link can open it</span>
           </label>
           <div class="share-link">
             <input type="text" id="share-url" readonly aria-label="Share link">
@@ -87,10 +89,52 @@
           <p class="hint" id="share-hint"></p>
         </div>
 
+        <div class="row" style="margin:26px 0 12px">
+          <h2 style="font-family:var(--serif); font-size:20px; margin:0">Folders inside</h2>
+          <span class="spacer"></span>
+          <button class="btn btn-sm" id="new-subfolder">+ Add a folder here</button>
+        </div>
+        <div class="cards" id="child-cards"></div>
+        <p class="hint" id="child-empty" hidden>No folders inside this one yet.</p>
+
+        <div class="row" style="margin:26px 0 0">
+          <h2 style="font-family:var(--serif); font-size:20px; margin:0">Tabs</h2>
+          <span class="spacer"></span>
+          <button class="btn btn-sm" id="new-tab">+ New tab</button>
+        </div>
+        <div class="tabbar" id="admin-tabbar" role="tablist"></div>
+
+        <div class="panel" id="tab-panel" hidden>
+          <h2>This tab</h2>
+          <div class="row" style="margin-bottom:12px">
+            <label class="field" style="flex:1 1 200px; margin:0">
+              <span>Name</span>
+              <input type="text" id="tab-title">
+            </label>
+            <label class="field" style="flex:0 1 220px; margin:0">
+              <span>Who can see it</span>
+              <select id="tab-access">
+                <option value="open">Anyone with the link</option>
+                <option value="pin">Only after the PIN</option>
+              </select>
+            </label>
+          </div>
+          <label class="switch" style="margin-bottom:10px">
+            <input type="checkbox" id="tab-downloadable">
+            <span>Clients can download these (always asks for the PIN first)</span>
+          </label>
+          <p class="hint" id="tab-warning" hidden></p>
+          <div class="row" style="margin-top:14px">
+            <button class="btn btn-sm btn-primary" id="save-tab">Save tab</button>
+            <span class="spacer"></span>
+            <button class="btn btn-sm btn-danger" id="delete-tab">Delete this tab</button>
+          </div>
+        </div>
+
         <div class="panel">
-          <h2>Add poses</h2>
+          <h2>Add images to <span id="upload-target"></span></h2>
           <div class="dropzone" id="dropzone">
-            <strong>Drop photos here</strong>
+            <strong>Drop images here</strong>
             <span class="small">or</span>
             <button class="btn btn-sm" id="pick-files" style="margin-left:6px">Choose files</button>
             <p class="hint" id="upload-hint" style="margin-top:10px"></p>
@@ -100,20 +144,20 @@
         </div>
 
         <div class="row" style="margin:26px 0 14px">
-          <h2 style="font-family:var(--serif); font-size:20px; margin:0">Poses <span class="muted" id="photo-count"></span></h2>
+          <h2 style="font-family:var(--serif); font-size:20px; margin:0">Images <span class="muted" id="image-count"></span></h2>
           <span class="spacer"></span>
           <label class="switch small"><input type="checkbox" id="only-picked"><span>Only client picks</span></label>
         </div>
 
-        <div class="photo-grid" id="photo-grid"></div>
-        <div class="empty" id="collection-empty" hidden>
-          <p style="margin:0"><strong>No poses in here yet.</strong></p>
-          <p class="small" style="margin:8px 0 0">Drop your reference photos above — drag them afterwards to set the order your client sees.</p>
+        <div class="photo-grid" id="admin-grid"></div>
+        <div class="empty" id="grid-empty" hidden>
+          <p style="margin:0"><strong>Nothing in this tab yet.</strong></p>
+          <p class="small" style="margin:8px 0 0">Drop images above — drag them afterwards to set the order your client sees.</p>
         </div>
 
-        <div class="panel" id="picks-panel" hidden style="margin-top:26px">
+        <div class="panel" id="selections-panel" hidden style="margin-top:26px">
           <h2>What your client picked</h2>
-          <div id="picks-summary" class="stack"></div>
+          <div id="selections-summary" class="stack"></div>
         </div>
       </section>
     </main>

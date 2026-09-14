@@ -1,19 +1,23 @@
-// Pose Board — studio side: collections, uploads, ordering, sharing.
+// Pose Board — the studio side: build folders, fill their tabs, publish, and
+// read back what the client picked.
 
 const THUMB_MAX_EDGE = 640;
 const DISPLAY_MAX_EDGE = 2400;
 
 const state = {
-  collections: [],
-  collection: null,
-  photos: [],
-  picks: [],
   maxUploadBytes: 25 * 1024 * 1024,
-  onlyPicked: false,
+  maxDepth: 20,
+  folderId: null,     // null means the top-level list
+  folder: null,
+  path: [],
+  children: [],
+  tabs: [],
+  activeTabId: null,
+  selections: [],
+  rootFolders: [],
   search: '',
+  onlyPicked: false,
 };
-
-// ---------- tiny DOM helper (no innerHTML for user text) ----------
 
 function h(tag, props = {}, children = []) {
   const node = document.createElement(tag);
@@ -41,15 +45,15 @@ function toast(message, isError = false) {
   const node = h('div', { class: `toast${isError ? ' error' : ''}`, text: message, role: 'status' });
   document.body.append(node);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => node.remove(), isError ? 6000 : 2600);
+  toastTimer = setTimeout(() => node.remove(), isError ? 5000 : 2400);
 }
 
 // ---------- API ----------
 
 async function api(path, { method = 'GET', body } = {}) {
-  const options = { method, credentials: 'same-origin', headers: {} };
+  const options = { method, credentials: 'same-origin' };
   if (body !== undefined) {
-    options.headers['content-type'] = 'application/json';
+    options.headers = { 'content-type': 'application/json' };
     options.body = JSON.stringify(body);
   }
   const response = await fetch(path, options);
@@ -101,7 +105,7 @@ async function renderScaled(file, maxEdge, quality) {
   return { blob, width, height, source };
 }
 
-// ---------- modal ----------
+// ---------- modals ----------
 
 function openModal(card, { onClose } = {}) {
   const backdrop = h('div', { class: 'modal' }, [card]);
@@ -110,462 +114,564 @@ function openModal(card, { onClose } = {}) {
     document.removeEventListener('keydown', onKey);
     onClose?.();
   };
-  function onKey(event) {
-    if (event.key === 'Escape') close();
-  }
-  backdrop.addEventListener('mousedown', (event) => {
-    if (event.target === backdrop) close();
-  });
+  function onKey(event) { if (event.key === 'Escape') close(); }
+  backdrop.addEventListener('click', (event) => { if (event.target === backdrop) close(); });
   document.addEventListener('keydown', onKey);
   $('#modal-root').append(backdrop);
-  card.querySelector('input, textarea, button')?.focus();
   return close;
 }
 
-// ---------- session ----------
-
-function showLogin() {
-  $('#app-view').hidden = true;
-  $('#login-view').hidden = false;
-  $('#login-password').focus();
+function askText({ title, label, value = '', placeholder = '', confirmText = 'Save' }) {
+  return new Promise((resolve) => {
+    const input = h('input', { type: 'text', value, placeholder });
+    let close;
+    const form = h('form', {
+      class: 'modal-card',
+      // Resolve before close(): close() triggers openModal's onClose, which
+      // resolves with null, and the first settle is the one that counts.
+      onsubmit: (event) => { event.preventDefault(); resolve(input.value.trim()); close(); },
+    }, [
+      h('h2', { text: title }),
+      h('label', { class: 'field' }, [h('span', { text: label }), input]),
+      h('div', { class: 'modal-actions' }, [
+        h('button', { type: 'button', class: 'btn', text: 'Cancel', onclick: () => { resolve(null); close(); } }),
+        h('button', { type: 'submit', class: 'btn btn-primary', text: confirmText }),
+      ]),
+    ]);
+    close = openModal(form, { onClose: () => resolve(null) });
+    input.focus();
+    input.select();
+  });
 }
 
-function showApp() {
-  $('#login-view').hidden = true;
-  $('#app-view').hidden = false;
+function confirmAction({ title, message, confirmText = 'Delete' }) {
+  return new Promise((resolve) => {
+    let close;
+    const card = h('div', { class: 'modal-card' }, [
+      h('h2', { text: title }),
+      h('p', { class: 'hint', style: 'margin-bottom:6px', text: message }),
+      h('div', { class: 'modal-actions' }, [
+        h('button', { class: 'btn', text: 'Cancel', onclick: () => { resolve(false); close(); } }),
+        h('button', { class: 'btn btn-danger', text: confirmText, onclick: () => { resolve(true); close(); } }),
+      ]),
+    ]);
+    close = openModal(card, { onClose: () => resolve(false) });
+  });
 }
 
-async function boot() {
-  const session = await api('/api/session');
-  state.maxUploadBytes = (session.maxUploadMb || 25) * 1024 * 1024;
-  $('#upload-hint').textContent =
-    `JPEG, PNG, WebP, GIF, AVIF or HEIC — up to ${session.maxUploadMb} MB each. Bigger files are resized automatically.`;
-  $('#login-default-warning').hidden = !session.usingDefaultPassword;
-  $('#default-password-banner').hidden = !session.usingDefaultPassword;
-  if (!session.authed) return showLogin();
-  showApp();
-  await loadCollections();
-  route();
+// ---------- loading ----------
+
+async function loadRoot() {
+  state.folderId = null;
+  state.folder = null;
+  const { folders } = await api('/api/folders');
+  state.rootFolders = folders;
+  render();
 }
 
-$('#login-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const error = $('#login-error');
-  error.hidden = true;
+async function loadFolder(id) {
+  const data = await api(`/api/folders/${encodeURIComponent(id)}`);
+  state.folderId = id;
+  state.folder = data.folder;
+  state.path = data.path;
+  state.children = data.folders;
+  state.tabs = data.tabs;
+  state.selections = data.selections;
+  if (!state.tabs.some((tab) => tab.id === state.activeTabId)) {
+    state.activeTabId = state.tabs[0]?.id || null;
+  }
+  render();
+}
+
+const refresh = () => (state.folderId ? loadFolder(state.folderId) : loadRoot());
+
+async function go(id) {
   try {
-    await api('/api/login', { method: 'POST', body: { password: $('#login-password').value } });
-    $('#login-password').value = '';
-    showApp();
-    await loadCollections();
-    route();
+    state.activeTabId = null;
+    if (id) await loadFolder(id);
+    else await loadRoot();
+    window.scrollTo({ top: 0 });
   } catch (err) {
-    error.textContent = err.message;
-    error.hidden = false;
-  }
-});
-
-$('#logout').addEventListener('click', async () => {
-  await api('/api/logout', { method: 'POST' }).catch(() => {});
-  location.hash = '';
-  showLogin();
-});
-
-// ---------- routing ----------
-
-function route() {
-  const match = /^#\/c\/([A-Za-z0-9_-]+)/.exec(location.hash);
-  if (match) openCollection(match[1]);
-  else showDashboard();
-}
-
-window.addEventListener('hashchange', route);
-
-// ---------- dashboard ----------
-
-async function loadCollections() {
-  const data = await api('/api/collections');
-  state.collections = data.collections;
-}
-
-function showDashboard() {
-  state.collection = null;
-  $('#collection-view').hidden = true;
-  $('#dashboard-view').hidden = false;
-  $('#nav-home').hidden = true;
-  renderDashboard();
-}
-
-function renderDashboard() {
-  const grid = $('#collection-cards');
-  const term = state.search.trim().toLowerCase();
-  const collections = term
-    ? state.collections.filter((c) =>
-        `${c.title} ${c.clientName} ${c.description}`.toLowerCase().includes(term))
-    : state.collections;
-
-  grid.replaceChildren(...collections.map(collectionCard));
-  $('#dashboard-empty').hidden = state.collections.length > 0;
-  grid.hidden = collections.length === 0;
-
-  if (state.collections.length && !collections.length) {
-    grid.hidden = true;
-    $('#dashboard-empty').hidden = false;
-    $('#dashboard-empty').querySelector('p').textContent = `Nothing matches “${state.search}”.`;
+    toast(err.message, true);
   }
 }
 
-function collectionCard(collection) {
-  const cover = collection.coverPhotoId
-    ? h('img', { src: `/t/${collection.coverPhotoId}`, alt: '', loading: 'lazy' })
-    : h('span', { text: 'No photos yet' });
+// ---------- rendering: the top-level list ----------
 
-  return h('button', {
-    class: 'card',
-    type: 'button',
-    onclick: () => { location.hash = `#/c/${collection.id}`; },
-  }, [
-    h('div', { class: 'card-cover' }, [cover]),
+function folderCard(folder) {
+  return h('button', { class: 'card', onclick: () => go(folder.id) }, [
+    h('div', { class: 'card-cover' }, [
+      folder.coverImageUrl
+        ? h('img', { src: folder.coverImageUrl, alt: '', loading: 'lazy' })
+        : h('span', { class: 'muted small', text: 'No cover yet' }),
+    ]),
     h('div', { class: 'card-body' }, [
-      h('h3', { class: 'card-title', text: collection.title }),
-      collection.clientName ? h('p', { class: 'card-meta', text: `For ${collection.clientName}` }) : null,
-      h('p', { class: 'card-meta', text: `${collection.photoCount} pose${collection.photoCount === 1 ? '' : 's'}` }),
+      h('p', { class: 'card-title', text: folder.title }),
+      h('p', { class: 'card-meta', text: folder.clientName || 'No client name' }),
       h('div', { class: 'card-foot' }, [
-        h('span', {
-          class: `badge${collection.published ? ' live' : ''}`,
-          text: collection.published ? 'Live' : 'Draft',
-        }),
-        collection.pin ? h('span', { class: 'badge', text: 'PIN' }) : null,
-        collection.pickCount
-          ? h('span', { class: 'badge warn', text: `♥ ${collection.pickCount}` })
-          : null,
+        h('span', { class: `badge${folder.status === 'published' ? ' live' : ''}`, text: folder.status === 'published' ? 'Live' : 'Draft' }),
+        h('span', { class: 'muted small', text: `${folder.imageCount} image${folder.imageCount === 1 ? '' : 's'}` }),
+        folder.folderCount > 0 && h('span', { class: 'muted small', text: `${folder.folderCount} folder${folder.folderCount === 1 ? '' : 's'}` }),
+        folder.selectionCount > 0 && h('span', { class: 'badge', text: `♥ ${folder.selectionCount}` }),
       ]),
     ]),
   ]);
 }
 
-$('#collection-search').addEventListener('input', (event) => {
-  state.search = event.target.value;
-  renderDashboard();
-});
+function renderRoot() {
+  const term = state.search.trim().toLowerCase();
+  const visible = term
+    ? state.rootFolders.filter((f) => `${f.title} ${f.clientName}`.toLowerCase().includes(term))
+    : state.rootFolders;
 
-// ---------- new collection ----------
+  $('#root-cards').replaceChildren(...visible.map(folderCard));
+  $('#root-empty').hidden = state.rootFolders.length > 0;
+}
 
-function newCollectionDialog() {
-  const title = h('input', { type: 'text', required: true, placeholder: 'Maternity — studio poses' });
-  const client = h('input', { type: 'text', placeholder: 'Sarah & Tom (optional)' });
-  const description = h('textarea', { placeholder: 'A note your client will see at the top of the gallery (optional)' });
+// ---------- rendering: one folder ----------
 
-  const form = h('form', { class: 'modal-card' }, [
-    h('h2', { text: 'New collection' }),
-    h('label', { class: 'field' }, [h('span', { text: 'Name' }), title]),
-    h('label', { class: 'field' }, [h('span', { text: 'Client' }), client]),
-    h('label', { class: 'field' }, [h('span', { text: 'Intro note' }), description]),
-    h('div', { class: 'modal-actions' }, [
-      h('button', { class: 'btn btn-ghost', type: 'button', text: 'Cancel', onclick: () => close() }),
-      h('button', { class: 'btn btn-primary', type: 'submit', text: 'Create' }),
+function renderCrumbs() {
+  const crumbs = $('#admin-crumbs');
+  const entries = [{ id: null, title: 'All folders' }, ...state.path];
+  crumbs.replaceChildren(...entries.flatMap((entry, index) => {
+    const last = index === entries.length - 1;
+    const node = last
+      ? h('span', { class: 'crumb current', text: entry.title, 'aria-current': 'page' })
+      : h('button', { class: 'crumb', text: entry.title, onclick: () => go(entry.id) });
+    return index === 0 ? [node] : [h('span', { class: 'crumb-sep', text: '/' }), node];
+  }));
+}
+
+function renderShare() {
+  const { folder } = state;
+  const url = `${location.origin}/g/${folder.uniqueLink}`;
+  $('#share-url').value = url;
+  $('#publish-toggle').checked = folder.status === 'published';
+
+  const hints = [];
+  if (folder.status !== 'published') hints.push('The link is dead until you turn this on.');
+  if (!folder.hasPin && !folder.inheritsPin) hints.push('No download PIN is set, so nothing in this folder can be downloaded and PIN-only tabs stay closed.');
+  else if (folder.inheritsPin) hints.push('Using the download PIN from a folder above this one.');
+  if (!folder.effectiveWebhookUrl) hints.push('No handoff address is set, so the client has no "Send to photographer" button.');
+  $('#share-hint').textContent = hints.join(' ');
+}
+
+function renderChildren() {
+  $('#child-cards').replaceChildren(...state.children.map(folderCard));
+  $('#child-empty').hidden = state.children.length > 0;
+}
+
+function renderTabs() {
+  const bar = $('#admin-tabbar');
+  bar.replaceChildren(...state.tabs.map((tab) => h('button', {
+    class: `tab${tab.id === state.activeTabId ? ' active' : ''}`,
+    role: 'tab',
+    'aria-selected': tab.id === state.activeTabId ? 'true' : 'false',
+    onclick: () => { state.activeTabId = tab.id; render(); },
+  }, [
+    tab.access === 'pin' ? '🔒 ' : '',
+    tab.title,
+    h('span', { class: 'tab-count', text: String(tab.images.length) }),
+  ])));
+
+  const tab = activeTab();
+  const panel = $('#tab-panel');
+  panel.hidden = !tab;
+  if (!tab) return;
+
+  $('#tab-title').value = tab.title;
+  $('#tab-access').value = tab.access;
+  $('#tab-downloadable').checked = Boolean(tab.downloadable);
+  $('#upload-target').textContent = tab.title;
+
+  const warning = $('#tab-warning');
+  const noPin = !state.folder.hasPin && !state.folder.inheritsPin;
+  if (noPin && tab.access === 'pin') {
+    warning.textContent = 'No download PIN is set, so this tab can never be opened by a client. Set one in Settings.';
+    warning.hidden = false;
+  } else if (noPin && tab.downloadable) {
+    warning.textContent = 'Downloads always ask for the PIN, and none is set — set one in Settings or clients cannot download.';
+    warning.hidden = false;
+  } else if (tab.access === 'pin') {
+    warning.textContent = 'These images are left out of the page entirely until the client enters the PIN.';
+    warning.hidden = false;
+  } else {
+    warning.hidden = true;
+  }
+}
+
+const activeTab = () => state.tabs.find((tab) => tab.id === state.activeTabId) || null;
+
+function imageTile(image, images) {
+  const picks = state.selections.filter((s) => s.imageId === image.id);
+  const isCover = state.folder.coverImageId === image.id;
+
+  const tile = h('figure', {
+    class: `tile${picks.length ? ' picked-ring' : ''}`,
+    draggable: 'true',
+    dataset: { id: image.id },
+  }, [
+    h('button', {
+      class: 'tile-open',
+      'aria-label': `Open ${image.title || image.fileName || 'image'}`,
+      onclick: () => openImageEditor(image, images),
+    }, [h('img', { src: image.thumbUrl, alt: image.title || '', loading: 'lazy' })]),
+    h('div', { class: 'tile-actions' }, [
+      h('button', {
+        class: `icon-btn${isCover ? ' on' : ''}`,
+        text: '★',
+        title: isCover ? 'This is the folder cover' : 'Use as the folder cover',
+        onclick: () => setCover(isCover ? null : image.id),
+      }),
+      h('button', {
+        class: 'icon-btn btn-danger',
+        text: '✕',
+        title: 'Delete this image',
+        onclick: () => deleteImage(image),
+      }),
+    ]),
+    (picks.length || image.title) && h('figcaption', { class: 'tile-caption' }, [
+      picks.length ? h('span', { class: 'badge', text: `♥ ${picks.length}` }) : null,
+      image.title ? h('span', { class: 'small', text: image.title }) : null,
     ]),
   ]);
 
-  form.addEventListener('submit', async (event) => {
+  tile.addEventListener('dragstart', (event) => {
+    tile.classList.add('dragging');
+    event.dataTransfer.setData('text/plain', image.id);
+    event.dataTransfer.effectAllowed = 'move';
+  });
+  tile.addEventListener('dragend', () => tile.classList.remove('dragging'));
+  tile.addEventListener('dragover', (event) => { event.preventDefault(); tile.classList.add('drop-target'); });
+  tile.addEventListener('dragleave', () => tile.classList.remove('drop-target'));
+  tile.addEventListener('drop', async (event) => {
     event.preventDefault();
+    tile.classList.remove('drop-target');
+    const draggedId = event.dataTransfer.getData('text/plain');
+    if (!draggedId || draggedId === image.id) return;
+    const ids = images.map((entry) => entry.id).filter((id) => id !== draggedId);
+    ids.splice(ids.indexOf(image.id), 0, draggedId);
     try {
-      const { collection } = await api('/api/collections', {
-        method: 'POST',
-        body: { title: title.value, clientName: client.value, description: description.value },
-      });
-      close();
-      await loadCollections();
-      location.hash = `#/c/${collection.id}`;
-      toast('Collection created');
+      await api(`/api/tabs/${state.activeTabId}/order`, { method: 'POST', body: { ids } });
+      await refresh();
     } catch (err) {
       toast(err.message, true);
     }
   });
 
-  const close = openModal(form);
-}
-
-$('#new-collection').addEventListener('click', newCollectionDialog);
-$('#empty-new-collection').addEventListener('click', newCollectionDialog);
-$('#nav-home').addEventListener('click', () => { location.hash = ''; });
-
-// ---------- collection view ----------
-
-async function openCollection(id) {
-  try {
-    const data = await api(`/api/collections/${id}`);
-    state.collection = data.collection;
-    state.photos = data.photos;
-    state.picks = data.picks;
-  } catch (err) {
-    toast(err.message, true);
-    location.hash = '';
-    return;
-  }
-  $('#dashboard-view').hidden = true;
-  $('#collection-view').hidden = false;
-  $('#nav-home').hidden = false;
-  renderCollection();
-}
-
-function renderCollection() {
-  const collection = state.collection;
-  if (!collection) return;
-
-  $('#collection-title').textContent = collection.title;
-  const bits = [];
-  if (collection.clientName) bits.push(`For ${collection.clientName}`);
-  if (collection.description) bits.push(collection.description);
-  $('#collection-subtitle').textContent = bits.join(' · ');
-
-  const status = $('#collection-status');
-  status.textContent = collection.published ? 'Live' : 'Draft';
-  status.className = `badge${collection.published ? ' live' : ''}`;
-
-  $('#publish-toggle').checked = collection.published;
-  $('#share-url').value = `${location.origin}/s/${collection.shareId}`;
-  $('#share-hint').textContent = collection.published
-    ? collection.pin
-      ? 'Anyone with this link and the PIN can view the gallery.'
-      : 'Anyone with this link can view the gallery. Add a PIN in Settings for another layer.'
-    : 'The gallery is a draft — the link will not open until you switch it live.';
-
-  renderPhotos();
-  renderPicks();
-}
-
-function picksFor(photoId) {
-  return state.picks.filter((pick) => pick.photoId === photoId);
-}
-
-function renderPhotos() {
-  const grid = $('#photo-grid');
-  const photos = state.onlyPicked
-    ? state.photos.filter((photo) => picksFor(photo.id).length > 0)
-    : state.photos;
-
-  grid.replaceChildren(...photos.map((photo, index) => photoTile(photo, index)));
-  $('#photo-count').textContent = state.photos.length ? `· ${state.photos.length}` : '';
-  $('#collection-empty').hidden = state.photos.length > 0;
-  grid.hidden = photos.length === 0;
-}
-
-function photoTile(photo, index) {
-  const picks = picksFor(photo.id);
-  const isCover = state.collection.coverPhotoId === photo.id;
-  const reorderable = !state.onlyPicked;
-
-  const image = h('img', {
-    src: photo.hasThumb ? `/t/${photo.id}` : `/f/${photo.id}`,
-    alt: photo.title || photo.originalName || 'Pose',
-    loading: 'lazy',
-    draggable: 'false',
-  });
-
-  const tile = h('div', {
-    class: `tile${picks.length ? ' picked-ring' : ''}`,
-    dataset: { id: photo.id },
-    draggable: reorderable ? 'true' : 'false',
-  }, [
-    h('button', {
-      class: 'tile-open',
-      type: 'button',
-      title: 'Open',
-      onclick: () => openPhotoEditor(index),
-    }, [image]),
-    h('div', { class: 'tile-actions' }, [
-      reorderable
-        ? h('span', { class: 'icon-btn drag-handle', title: 'Drag to reorder', text: '⠿' })
-        : null,
-      h('button', {
-        class: 'icon-btn',
-        type: 'button',
-        title: 'Delete',
-        onclick: () => deletePhoto(photo),
-      }, ['🗑']),
-    ]),
-    (photo.title || picks.length || isCover)
-      ? h('div', { class: 'tile-caption' }, [
-          isCover ? h('span', { title: 'Cover photo' }, ['★']) : null,
-          picks.length ? h('span', { text: `♥ ${picks.length}` }) : null,
-          photo.title ? h('span', { text: photo.title }) : null,
-        ])
-      : null,
-  ]);
-
   return tile;
 }
 
-// drag to reorder
-let draggingId = null;
-const grid = $('#photo-grid');
-
-grid.addEventListener('dragstart', (event) => {
-  const tile = event.target.closest('.tile');
-  if (!tile || tile.draggable === false) return;
-  draggingId = tile.dataset.id;
-  tile.classList.add('dragging');
-  event.dataTransfer.effectAllowed = 'move';
-  event.dataTransfer.setData('text/plain', draggingId);
-});
-
-grid.addEventListener('dragover', (event) => {
-  const dragging = grid.querySelector('.dragging');
-  if (!dragging) return;
-  event.preventDefault();
-  const target = event.target.closest('.tile');
-  if (!target || target === dragging) return;
-  const rect = target.getBoundingClientRect();
-  const after = event.clientX - rect.left > rect.width / 2;
-  grid.insertBefore(dragging, after ? target.nextSibling : target);
-});
-
-grid.addEventListener('drop', (event) => event.preventDefault());
-
-grid.addEventListener('dragend', async () => {
-  const dragging = grid.querySelector('.dragging');
-  dragging?.classList.remove('dragging');
-  if (!draggingId) return;
-  draggingId = null;
-  const ids = [...grid.querySelectorAll('.tile')].map((tile) => tile.dataset.id);
-  try {
-    const { photos } = await api(`/api/collections/${state.collection.id}/order`, {
-      method: 'POST',
-      body: { ids },
-    });
-    state.photos = photos;
-  } catch (err) {
-    toast(err.message, true);
-    renderPhotos();
-  }
-});
-
-$('#only-picked').addEventListener('change', (event) => {
-  state.onlyPicked = event.target.checked;
-  renderPhotos();
-});
-
-// ---------- picks summary ----------
-
-function renderPicks() {
-  const panel = $('#picks-panel');
-  const summary = $('#picks-summary');
-  if (!state.picks.length) {
-    panel.hidden = true;
+function renderGrid() {
+  const tab = activeTab();
+  const grid = $('#admin-grid');
+  const empty = $('#grid-empty');
+  if (!tab) {
+    grid.replaceChildren();
+    empty.hidden = true;
+    $('#image-count').textContent = '';
     return;
   }
-  panel.hidden = false;
 
-  const byClient = new Map();
-  for (const pick of state.picks) {
-    const name = pick.clientName || 'Guest';
-    if (!byClient.has(name)) byClient.set(name, []);
-    byClient.get(name).push(pick);
+  const pickedIds = new Set(state.selections.map((s) => s.imageId));
+  const images = state.onlyPicked ? tab.images.filter((image) => pickedIds.has(image.id)) : tab.images;
+
+  $('#image-count').textContent = tab.images.length ? `· ${tab.images.length}` : '';
+  grid.replaceChildren(...images.map((image) => imageTile(image, tab.images)));
+  empty.hidden = images.length > 0;
+}
+
+function renderSelections() {
+  const panel = $('#selections-panel');
+  panel.hidden = state.selections.length === 0;
+  if (!state.selections.length) return;
+
+  const bySession = new Map();
+  for (const selection of state.selections) {
+    if (!bySession.has(selection.clientSessionId)) bySession.set(selection.clientSessionId, []);
+    bySession.get(selection.clientSessionId).push(selection);
   }
 
-  summary.replaceChildren(...[...byClient.entries()].map(([name, picks]) =>
-    h('div', { class: 'stack', style: 'border-top:1px solid var(--line-soft); padding-top:12px' }, [
+  $('#selections-summary').replaceChildren(...[...bySession.entries()].map(([sessionId, picks]) => h('div', {}, [
+    h('p', { style: 'margin:0 0 6px' }, [
+      h('strong', { text: picks[0].clientName || 'A client' }),
+      h('span', { class: 'muted small', text: ` · ${picks.length} pick${picks.length === 1 ? '' : 's'} · ${sessionId.slice(0, 8)}` }),
+    ]),
+    h('div', { class: 'row' }, picks.map((pick) => h('span', {
+      class: 'tag',
+      text: pick.note ? `${shortName(pick.imageId)} — ${pick.note}` : shortName(pick.imageId),
+    }))),
+  ])));
+}
+
+function shortName(imageId) {
+  for (const tab of state.tabs) {
+    const image = tab.images.find((entry) => entry.id === imageId);
+    if (image) return image.title || image.fileName || imageId.slice(0, 10);
+  }
+  return imageId.slice(0, 10);
+}
+
+function renderFolder() {
+  const { folder } = state;
+  $('#folder-title').textContent = folder.title;
+  $('#folder-subtitle').textContent = [
+    folder.clientName,
+    `level ${folder.depth} of ${state.maxDepth}`,
+    folder.description,
+  ].filter(Boolean).join(' · ');
+
+  const badge = $('#folder-status');
+  badge.textContent = folder.status === 'published' ? 'Live' : 'Draft';
+  badge.className = `badge${folder.status === 'published' ? ' live' : ''}`;
+
+  renderCrumbs();
+  renderShare();
+  renderChildren();
+  renderTabs();
+  renderGrid();
+  renderSelections();
+}
+
+function render() {
+  const inFolder = Boolean(state.folderId);
+  $('#root-view').hidden = inFolder;
+  $('#folder-view').hidden = !inFolder;
+  $('#nav-home').hidden = !inFolder;
+  if (inFolder) renderFolder();
+  else renderRoot();
+}
+
+// ---------- actions ----------
+
+async function createFolder(parentId) {
+  const title = await askText({
+    title: parentId ? 'New folder inside this one' : 'New folder',
+    label: 'Name',
+    placeholder: 'Smith Wedding',
+    confirmText: 'Create',
+  });
+  if (!title) return;
+  try {
+    const { folder } = await api('/api/folders', { method: 'POST', body: { title, parentId } });
+    toast('Folder created');
+    await go(folder.id);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function patchFolder(body, message) {
+  try {
+    await api(`/api/folders/${state.folderId}`, { method: 'PATCH', body });
+    await refresh();
+    if (message) toast(message);
+  } catch (err) {
+    toast(err.message, true);
+    await refresh();
+  }
+}
+
+const setCover = (imageId) => patchFolder({ coverImageId: imageId }, imageId ? 'Cover set' : 'Cover cleared');
+
+async function deleteImage(image) {
+  const ok = await confirmAction({
+    title: 'Delete this image?',
+    message: 'It is removed from the gallery and the file is deleted from disk. This cannot be undone.',
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/images/${image.id}`, { method: 'DELETE' });
+    await refresh();
+    toast('Image deleted');
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function openImageEditor(image, images) {
+  const index = images.indexOf(image);
+  const title = h('input', { type: 'text', value: image.title || '', placeholder: 'Hands in pockets, looking away' });
+  const notes = h('textarea', { placeholder: 'Notes for the shoot' }, [image.notes || '']);
+  const preview = h('img', { src: image.url, alt: '' });
+  let close;
+
+  const save = async () => {
+    try {
+      await api(`/api/images/${image.id}`, {
+        method: 'PATCH',
+        body: { title: title.value, notes: notes.value },
+      });
+      close();
+      await refresh();
+      toast('Saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
+
+  const card = h('div', { class: 'modal-card lightbox-card' }, [
+    h('div', { class: 'lightbox-stage' }, [preview]),
+    h('div', { class: 'lightbox-side stack' }, [
+      h('p', { class: 'muted small', style: 'margin:0', text: `${index + 1} of ${images.length}${image.fileName ? ` · ${image.fileName}` : ''}` }),
+      h('label', { class: 'field' }, [h('span', { text: 'Title' }), title]),
+      h('label', { class: 'field' }, [h('span', { text: 'Notes' }), notes]),
       h('div', { class: 'row' }, [
-        h('strong', { text: name }),
-        h('span', { class: 'badge warn', text: `♥ ${picks.length}` }),
+        h('button', { class: 'btn btn-sm btn-primary', text: 'Save', onclick: save }),
+        h('button', { class: 'btn btn-sm', text: 'Use as cover', onclick: () => { close(); setCover(image.id); } }),
       ]),
-      h('div', { class: 'row', style: 'gap:8px' }, picks.map((pick) => {
-        const index = state.photos.findIndex((photo) => photo.id === pick.photoId);
-        return h('button', {
-          class: 'icon-btn',
-          type: 'button',
-          style: 'width:56px;height:72px;border-radius:8px;overflow:hidden;padding:0',
-          title: pick.note || 'Open pose',
-          onclick: () => index >= 0 && openPhotoEditor(index),
-        }, [h('img', {
-          src: `/t/${pick.photoId}`,
-          alt: '',
-          style: 'width:100%;height:100%;object-fit:cover',
-          loading: 'lazy',
-        })]);
-      })),
-      ...picks.filter((pick) => pick.note).map((pick) =>
-        h('p', { class: 'small muted', style: 'margin:0' }, [`“${pick.note}”`])),
-    ])));
+    ]),
+    h('button', { class: 'icon-btn close-x', text: '✕', 'aria-label': 'Close', onclick: () => close() }),
+  ]);
+  close = openModal(card);
+}
+
+function openSettings() {
+  const { folder } = state;
+  const title = h('input', { type: 'text', value: folder.title });
+  const clientName = h('input', { type: 'text', value: folder.clientName || '', placeholder: 'Ana & Tom' });
+  const description = h('textarea', { placeholder: 'A note shown at the top of your client’s gallery' }, [folder.description || '']);
+  const pin = h('input', { type: 'text', inputmode: 'numeric', placeholder: folder.hasPin ? 'Set — type a new one to change it' : '4–12 digits' });
+  const webhook = h('input', { type: 'text', value: folder.webhookUrl || '', placeholder: 'https://studio.example.com/hooks/selection' });
+  let close;
+
+  const save = async () => {
+    const body = {
+      title: title.value,
+      clientName: clientName.value,
+      description: description.value,
+      webhookUrl: webhook.value.trim(),
+    };
+    // Left blank means "leave it alone"; the Clear button is how you remove it.
+    if (pin.value.trim()) body.downloadPin = pin.value.trim();
+    try {
+      await api(`/api/folders/${folder.id}`, { method: 'PATCH', body });
+      close();
+      await refresh();
+      toast('Settings saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
+
+  const card = h('div', { class: 'modal-card' }, [
+    h('h2', { text: 'Folder settings' }),
+    h('label', { class: 'field' }, [h('span', { text: 'Name' }), title]),
+    h('label', { class: 'field' }, [h('span', { text: 'Client name' }), clientName]),
+    h('label', { class: 'field' }, [h('span', { text: 'Intro note' }), description]),
+    h('label', { class: 'field' }, [h('span', { text: 'Download PIN' }), pin]),
+    h('p', { class: 'hint', text: folder.inheritsPin
+      ? 'Blank means this folder keeps using the PIN from a folder above it.'
+      : 'Clients type this before they can download, or open a PIN-only tab. Nothing downloads without one.' }),
+    h('label', { class: 'field' }, [h('span', { text: 'Send selections to (webhook URL)' }), webhook]),
+    h('p', { class: 'hint', text: 'Where "Send to photographer" POSTs the shortlist. Blank uses the WEBHOOK_URL the server was started with, if any.' }),
+    h('div', { class: 'modal-actions' }, [
+      folder.hasPin && h('button', {
+        class: 'btn btn-sm',
+        text: 'Clear PIN',
+        onclick: async () => { close(); await patchFolder({ downloadPin: '' }, 'PIN cleared'); },
+      }),
+      h('button', {
+        class: 'btn btn-sm',
+        text: 'Reset share link',
+        onclick: async () => {
+          close();
+          const ok = await confirmAction({
+            title: 'Reset the share link?',
+            message: 'The old link stops working immediately for everyone who has it.',
+            confirmText: 'Reset link',
+          });
+          if (!ok) return;
+          try {
+            await api(`/api/folders/${folder.id}/relink`, { method: 'POST' });
+            await refresh();
+            toast('New link issued');
+          } catch (err) { toast(err.message, true); }
+        },
+      }),
+      h('button', {
+        class: 'btn btn-sm btn-danger',
+        text: 'Delete folder',
+        onclick: async () => {
+          close();
+          const ok = await confirmAction({
+            title: `Delete "${folder.title}"?`,
+            message: 'Everything inside it — folders, tabs, images and client picks — is deleted, and the files are removed from disk.',
+          });
+          if (!ok) return;
+          try {
+            await api(`/api/folders/${folder.id}`, { method: 'DELETE' });
+            toast('Folder deleted');
+            await go(folder.parentId);
+          } catch (err) { toast(err.message, true); }
+        },
+      }),
+      h('button', { class: 'btn btn-primary btn-sm', text: 'Save', onclick: save }),
+    ]),
+  ]);
+  close = openModal(card);
+  title.focus();
+}
+
+async function createTab() {
+  const title = await askText({ title: 'New tab', label: 'Name', placeholder: 'Retouched', confirmText: 'Create' });
+  if (!title) return;
+  try {
+    const { tab } = await api(`/api/folders/${state.folderId}/tabs`, { method: 'POST', body: { title } });
+    state.activeTabId = tab.id;
+    await refresh();
+    toast('Tab created');
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function saveTab() {
+  const tab = activeTab();
+  if (!tab) return;
+  try {
+    await api(`/api/tabs/${tab.id}`, {
+      method: 'PATCH',
+      body: {
+        title: $('#tab-title').value,
+        access: $('#tab-access').value,
+        downloadable: $('#tab-downloadable').checked,
+      },
+    });
+    await refresh();
+    toast('Tab saved');
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function deleteTab() {
+  const tab = activeTab();
+  if (!tab) return;
+  const ok = await confirmAction({
+    title: `Delete the "${tab.title}" tab?`,
+    message: `${tab.images.length} image${tab.images.length === 1 ? '' : 's'} in it will be deleted from disk too.`,
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/tabs/${tab.id}`, { method: 'DELETE' });
+    state.activeTabId = null;
+    await refresh();
+    toast('Tab deleted');
+  } catch (err) {
+    toast(err.message, true);
+  }
 }
 
 // ---------- uploading ----------
-
-const dropzone = $('#dropzone');
-const fileInput = $('#file-input');
-
-$('#pick-files').addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', () => {
-  uploadFiles([...fileInput.files]);
-  fileInput.value = '';
-});
-
-['dragenter', 'dragover'].forEach((type) =>
-  dropzone.addEventListener(type, (event) => {
-    event.preventDefault();
-    dropzone.classList.add('hot');
-  }));
-
-['dragleave', 'drop'].forEach((type) =>
-  dropzone.addEventListener(type, (event) => {
-    event.preventDefault();
-    if (type === 'dragleave' && dropzone.contains(event.relatedTarget)) return;
-    dropzone.classList.remove('hot');
-  }));
-
-dropzone.addEventListener('drop', (event) => {
-  const files = [...(event.dataTransfer?.files || [])].filter((file) => file.type.startsWith('image/'));
-  if (files.length) uploadFiles(files);
-});
-
-function setProgress(fraction, label) {
-  const bar = $('#upload-progress');
-  bar.hidden = fraction === null;
-  if (fraction !== null) bar.firstElementChild.style.width = `${Math.round(fraction * 100)}%`;
-  if (label !== undefined) $('#upload-hint').textContent = label;
-}
-
-let uploading = false;
-
-async function uploadFiles(files) {
-  if (!state.collection) return;
-  if (uploading) return toast('Still uploading the last batch — one moment.', true);
-  const images = files.filter((file) => file.type.startsWith('image/'));
-  if (!images.length) return toast('Those files are not images.', true);
-
-  uploading = true;
-  const originalHint = $('#upload-hint').textContent;
-  let done = 0;
-  let failed = 0;
-
-  for (const [index, file] of images.entries()) {
-    const label = `Uploading ${index + 1} of ${images.length} — ${file.name}`;
-    setProgress(0, label);
-    try {
-      await uploadOne(file, (fraction) => setProgress(fraction, label));
-      done += 1;
-    } catch (err) {
-      failed += 1;
-      toast(`${file.name}: ${err.message}`, true);
-    }
-  }
-
-  uploading = false;
-  setProgress(null, originalHint);
-  if (done) {
-    await openCollection(state.collection.id);
-    await loadCollections();
-    toast(`Added ${done} photo${done === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}`);
-  }
-}
 
 async function uploadOne(file, onProgress) {
   let body = file;
   let type = file.type;
   let dimensions = null;
 
-  // Anything over the limit (or an unusually large original) is resized in the
-  // browser so the studio can still upload straight off a phone.
+  // The studio resizes before uploading, but anything still over the limit is
+  // scaled in the browser so an upload straight off a phone does not bounce.
   if (file.size > state.maxUploadBytes) {
     const scaled = await renderScaled(file, DISPLAY_MAX_EDGE, 0.86).catch(() => null);
     if (!scaled?.blob) throw new Error('too large and could not be resized in the browser');
@@ -579,8 +685,8 @@ async function uploadOne(file, onProgress) {
   if (thumb && !dimensions) dimensions = { width: thumb.source.width, height: thumb.source.height };
 
   const query = dimensions ? `?w=${dimensions.width}&h=${dimensions.height}` : '';
-  const { photo } = await uploadBinary(
-    `/api/collections/${state.collection.id}/photos${query}`,
+  const { image } = await uploadBinary(
+    `/api/tabs/${state.activeTabId}/images${query}`,
     body,
     {
       'content-type': type || 'image/jpeg',
@@ -590,181 +696,111 @@ async function uploadOne(file, onProgress) {
   );
 
   if (thumb?.blob) {
-    await uploadBinary(`/api/photos/${photo.id}/thumbnail`, thumb.blob, { 'content-type': 'image/jpeg' })
-      .catch(() => { /* the full-size image is used as its own thumbnail */ });
+    await uploadBinary(`/api/images/${image.id}/thumbnail`, thumb.blob, { 'content-type': 'image/jpeg' })
+      .catch(() => { /* the full image is used as its own thumbnail */ });
   }
-  return photo;
+  return image;
 }
 
-// ---------- photo editor ----------
-
-function openPhotoEditor(startIndex) {
-  let index = startIndex;
-
-  const stageImage = h('img', { alt: '', src: '' });
-  const title = h('input', { type: 'text', placeholder: 'Standing, hands in pockets' });
-  const notes = h('textarea', { placeholder: 'Direction for the shoot: lighting, angle, what to avoid…' });
-  const tags = h('input', { type: 'text', placeholder: 'seated, outdoor, golden hour' });
-  const meta = h('p', { class: 'small muted', style: 'margin:0 0 14px' });
-  const pickList = h('div', { class: 'stack small', style: 'margin-bottom:14px' });
-  const coverButton = h('button', { class: 'btn btn-sm', type: 'button' });
-
-  const side = h('div', { class: 'lightbox-side' }, [
-    h('h2', { style: 'font-family:var(--serif);margin:0 0 10px;font-size:19px', text: 'Pose details' }),
-    meta,
-    pickList,
-    h('label', { class: 'field' }, [h('span', { text: 'Title' }), title]),
-    h('label', { class: 'field' }, [h('span', { text: 'Notes for the shoot' }), notes]),
-    h('label', { class: 'field' }, [h('span', { text: 'Tags (comma separated)' }), tags]),
-    h('div', { class: 'row' }, [
-      h('button', { class: 'btn btn-sm btn-primary', type: 'button', text: 'Save', onclick: save }),
-      coverButton,
-      h('span', { class: 'spacer' }),
-      h('button', { class: 'btn btn-sm btn-danger', type: 'button', text: 'Delete', onclick: removeCurrent }),
-    ]),
-  ]);
-
-  const card = h('div', { class: 'modal-card lightbox-card' }, [
-    h('div', { class: 'lightbox-stage' }, [
-      h('button', { class: 'icon-btn close-x', type: 'button', title: 'Close', text: '✕', onclick: () => close() }),
-      h('button', { class: 'icon-btn lightbox-nav prev', type: 'button', title: 'Previous', text: '‹', onclick: () => step(-1) }),
-      stageImage,
-      h('button', { class: 'icon-btn lightbox-nav next', type: 'button', title: 'Next', text: '›', onclick: () => step(1) }),
-    ]),
-    side,
-  ]);
-
-  function current() {
-    return state.photos[index];
+async function uploadFiles(fileList) {
+  const files = [...fileList].filter((file) => file.type.startsWith('image/'));
+  if (!files.length) return;
+  if (!state.activeTabId) {
+    toast('Make a tab first, then drop images into it', true);
+    return;
   }
 
-  function paint() {
-    const photo = current();
-    if (!photo) return close();
-    stageImage.src = `/f/${photo.id}`;
-    stageImage.alt = photo.title || 'Pose';
-    title.value = photo.title || '';
-    notes.value = photo.notes || '';
-    tags.value = (photo.tags || []).join(', ');
-    const size = photo.size ? `${(photo.size / (1024 * 1024)).toFixed(1)} MB` : '';
-    const dims = photo.width && photo.height ? `${photo.width}×${photo.height}` : '';
-    meta.textContent = [`${index + 1} of ${state.photos.length}`, dims, size, photo.originalName]
-      .filter(Boolean)
-      .join(' · ');
+  const bar = $('#upload-progress');
+  const fill = bar.querySelector('i');
+  const hint = $('#upload-hint');
+  bar.hidden = false;
 
-    const picks = picksFor(photo.id);
-    pickList.replaceChildren(...(picks.length
-      ? [h('p', { class: 'badge warn', style: 'margin:0', text: `Picked by ${picks.map((p) => p.clientName).join(', ')}` }),
-         ...picks.filter((p) => p.note).map((p) => h('p', { class: 'muted', style: 'margin:0', text: `“${p.note}”` }))]
-      : []));
-
-    const isCover = state.collection.coverPhotoId === photo.id;
-    coverButton.textContent = isCover ? '★ Cover' : 'Make cover';
-    coverButton.onclick = () => setCover(isCover ? null : photo.id);
-  }
-
-  function step(delta) {
-    const next = index + delta;
-    if (next < 0 || next >= state.photos.length) return;
-    index = next;
-    paint();
-  }
-
-  async function save() {
-    const photo = current();
+  const failures = [];
+  for (const [index, file] of files.entries()) {
+    hint.textContent = `Uploading ${index + 1} of ${files.length} — ${file.name}`;
     try {
-      const { photo: updated } = await api(`/api/photos/${photo.id}`, {
-        method: 'PATCH',
-        body: {
-          title: title.value,
-          notes: notes.value,
-          tags: tags.value.split(',').map((tag) => tag.trim()).filter(Boolean),
-        },
+      await uploadOne(file, (fraction) => {
+        fill.style.width = `${Math.round(((index + fraction) / files.length) * 100)}%`;
       });
-      Object.assign(photo, updated);
-      renderPhotos();
-      paint();
-      toast('Saved');
     } catch (err) {
-      toast(err.message, true);
+      failures.push(`${file.name}: ${err.message}`);
     }
   }
 
-  async function setCover(photoId) {
-    try {
-      const { collection } = await api(`/api/collections/${state.collection.id}`, {
-        method: 'PATCH',
-        body: { coverPhotoId: photoId },
-      });
-      state.collection = collection;
-      renderPhotos();
-      paint();
-    } catch (err) {
-      toast(err.message, true);
-    }
-  }
-
-  async function removeCurrent() {
-    const photo = current();
-    if (!confirm('Delete this pose? This removes the file for good.')) return;
-    try {
-      await api(`/api/photos/${photo.id}`, { method: 'DELETE' });
-      state.photos = state.photos.filter((p) => p.id !== photo.id);
-      state.picks = state.picks.filter((p) => p.photoId !== photo.id);
-      renderPhotos();
-      renderPicks();
-      await loadCollections();
-      if (!state.photos.length) return close();
-      index = Math.min(index, state.photos.length - 1);
-      paint();
-      toast('Deleted');
-    } catch (err) {
-      toast(err.message, true);
-    }
-  }
-
-  function onKey(event) {
-    if (event.target.matches('input, textarea')) return;
-    if (event.key === 'ArrowLeft') step(-1);
-    if (event.key === 'ArrowRight') step(1);
-  }
-
-  document.addEventListener('keydown', onKey);
-  const close = openModal(card, { onClose: () => document.removeEventListener('keydown', onKey) });
-  paint();
+  fill.style.width = '100%';
+  setTimeout(() => { bar.hidden = true; fill.style.width = '0%'; }, 400);
+  hint.textContent = failures.length ? failures.join(' · ') : '';
+  await refresh();
+  if (failures.length) toast(`${failures.length} file${failures.length === 1 ? '' : 's'} did not upload`, true);
+  else toast(`${files.length} image${files.length === 1 ? '' : 's'} added`);
 }
 
-async function deletePhoto(photo) {
-  if (!confirm('Delete this pose? This removes the file for good.')) return;
-  try {
-    await api(`/api/photos/${photo.id}`, { method: 'DELETE' });
-    state.photos = state.photos.filter((p) => p.id !== photo.id);
-    state.picks = state.picks.filter((p) => p.photoId !== photo.id);
-    renderPhotos();
-    renderPicks();
-    await loadCollections();
-    toast('Deleted');
-  } catch (err) {
-    toast(err.message, true);
-  }
+// ---------- sign in ----------
+
+function showLogin() {
+  $('#app-view').hidden = true;
+  $('#login-view').hidden = false;
 }
 
-// ---------- sharing & settings ----------
+async function start() {
+  const session = await api('/api/session');
+  state.maxUploadBytes = (session.maxUploadMb || 25) * 1024 * 1024;
+  state.maxDepth = session.maxDepth || 20;
+  $('#upload-hint').textContent = `JPEG, PNG, WebP, GIF, AVIF or HEIC · up to ${session.maxUploadMb} MB each`;
+  $('#login-default-warning').hidden = !session.usingDefaultPassword;
+  $('#default-password-banner').hidden = !session.usingDefaultPassword;
 
-$('#publish-toggle').addEventListener('change', async (event) => {
+  if (!session.authed) return showLogin();
+  $('#login-view').hidden = true;
+  $('#app-view').hidden = false;
+  await loadRoot();
+}
+
+// ---------- wiring ----------
+
+$('#login-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const error = $('#login-error');
+  error.hidden = true;
   try {
-    const { collection } = await api(`/api/collections/${state.collection.id}`, {
-      method: 'PATCH',
-      body: { published: event.target.checked },
-    });
-    state.collection = collection;
-    renderCollection();
-    await loadCollections();
-    toast(collection.published ? 'Gallery is live' : 'Gallery is back to draft');
+    await api('/api/login', { method: 'POST', body: { password: $('#login-password').value } });
+    $('#login-password').value = '';
+    await start();
   } catch (err) {
-    toast(err.message, true);
-    event.target.checked = !event.target.checked;
+    error.textContent = err.message;
+    error.hidden = false;
   }
+});
+
+$('#logout').addEventListener('click', async () => {
+  await api('/api/logout', { method: 'POST' }).catch(() => {});
+  location.reload();
+});
+
+$('#nav-home').addEventListener('click', () => go(null));
+$('#new-folder').addEventListener('click', () => createFolder(state.folderId));
+$('#empty-new-folder').addEventListener('click', () => createFolder(null));
+$('#new-subfolder').addEventListener('click', () => createFolder(state.folderId));
+$('#folder-settings').addEventListener('click', openSettings);
+$('#new-tab').addEventListener('click', createTab);
+$('#save-tab').addEventListener('click', saveTab);
+$('#delete-tab').addEventListener('click', deleteTab);
+
+$('#folder-search').addEventListener('input', (event) => {
+  state.search = event.target.value;
+  renderRoot();
+});
+
+$('#only-picked').addEventListener('change', (event) => {
+  state.onlyPicked = event.target.checked;
+  renderGrid();
+});
+
+$('#publish-toggle').addEventListener('change', (event) => {
+  patchFolder(
+    { status: event.target.checked ? 'published' : 'draft' },
+    event.target.checked ? 'Gallery is live' : 'Gallery taken offline',
+  );
 });
 
 $('#copy-share').addEventListener('click', async () => {
@@ -774,109 +810,32 @@ $('#copy-share').addEventListener('click', async () => {
     toast('Link copied');
   } catch {
     $('#share-url').select();
-    toast('Press ⌘/Ctrl + C to copy', true);
+    toast('Press ⌘C / Ctrl+C to copy');
   }
 });
 
-$('#collection-settings').addEventListener('click', () => {
-  const collection = state.collection;
-  const title = h('input', { type: 'text', value: collection.title, required: true });
-  const client = h('input', { type: 'text', value: collection.clientName || '' });
-  const description = h('textarea', {}, [collection.description || '']);
-  const pin = h('input', { type: 'text', inputmode: 'numeric', placeholder: collection.pin ? 'Enter a new PIN' : '4–12 digits (optional)' });
+$('#pick-files').addEventListener('click', () => $('#file-input').click());
+$('#file-input').addEventListener('change', (event) => {
+  uploadFiles(event.target.files);
+  event.target.value = '';
+});
 
-  const form = h('form', { class: 'modal-card' }, [
-    h('h2', { text: 'Collection settings' }),
-    h('label', { class: 'field' }, [h('span', { text: 'Name' }), title]),
-    h('label', { class: 'field' }, [h('span', { text: 'Client' }), client]),
-    h('label', { class: 'field' }, [h('span', { text: 'Intro note' }), description]),
-    h('label', { class: 'field' }, [h('span', { text: collection.pin ? 'PIN (a PIN is set)' : 'PIN' }), pin]),
-    collection.pin
-      ? h('button', {
-          class: 'btn btn-sm btn-ghost',
-          type: 'button',
-          text: 'Remove PIN',
-          onclick: async () => {
-            await patch({ pin: '' });
-            close();
-            toast('PIN removed');
-          },
-        })
-      : null,
-    h('hr', { style: 'border:none;border-top:1px solid var(--line-soft);margin:18px 0' }),
-    h('div', { class: 'row' }, [
-      h('button', {
-        class: 'btn btn-sm',
-        type: 'button',
-        text: 'Reset share link',
-        title: 'The old link stops working immediately',
-        onclick: async () => {
-          if (!confirm('Reset the link? The old one stops working for everyone you sent it to.')) return;
-          try {
-            const { collection: updated } = await api(`/api/collections/${collection.id}/reshare`, { method: 'POST' });
-            state.collection = updated;
-            renderCollection();
-            close();
-            toast('New share link created');
-          } catch (err) {
-            toast(err.message, true);
-          }
-        },
-      }),
-      h('span', { class: 'spacer' }),
-      h('button', {
-        class: 'btn btn-sm btn-danger',
-        type: 'button',
-        text: 'Delete collection',
-        onclick: async () => {
-          if (!confirm(`Delete “${collection.title}” and all ${state.photos.length} photo(s)? This cannot be undone.`)) return;
-          try {
-            await api(`/api/collections/${collection.id}`, { method: 'DELETE' });
-            close();
-            await loadCollections();
-            location.hash = '';
-            toast('Collection deleted');
-          } catch (err) {
-            toast(err.message, true);
-          }
-        },
-      }),
-    ]),
-    h('div', { class: 'modal-actions' }, [
-      h('button', { class: 'btn btn-ghost', type: 'button', text: 'Cancel', onclick: () => close() }),
-      h('button', { class: 'btn btn-primary', type: 'submit', text: 'Save' }),
-    ]),
-  ]);
-
-  async function patch(body) {
-    const { collection: updated } = await api(`/api/collections/${collection.id}`, { method: 'PATCH', body });
-    state.collection = updated;
-    renderCollection();
-    await loadCollections();
-    return updated;
-  }
-
-  form.addEventListener('submit', async (event) => {
+const dropzone = $('#dropzone');
+for (const name of ['dragenter', 'dragover']) {
+  dropzone.addEventListener(name, (event) => {
     event.preventDefault();
-    const body = {
-      title: title.value,
-      clientName: client.value,
-      description: description.value,
-    };
-    if (pin.value.trim()) body.pin = pin.value.trim();
-    try {
-      await patch(body);
-      close();
-      toast('Saved');
-    } catch (err) {
-      toast(err.message, true);
-    }
+    dropzone.classList.add('hot');
   });
-
-  const close = openModal(form);
+}
+for (const name of ['dragleave', 'drop']) {
+  dropzone.addEventListener(name, () => dropzone.classList.remove('hot'));
+}
+dropzone.addEventListener('drop', (event) => {
+  event.preventDefault();
+  uploadFiles(event.dataTransfer.files);
 });
 
-boot().catch((err) => {
+start().catch((err) => {
   console.error(err);
-  toast(err.message || 'Could not reach the server', true);
+  showLogin();
 });

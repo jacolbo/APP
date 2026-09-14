@@ -27,5 +27,9 @@ services:
         value: /data
       - key: NODE_ENV
         value: production
+      # Where "Send to photographer" posts the client's selection. Optional:
+      # a folder can set its own URL in the studio instead.
+      - key: WEBHOOK_URL
+        sync: false
       - key: MAX_UPLOAD_MB
         value: "25"

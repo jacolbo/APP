@@ -143,7 +143,7 @@ sudo journalctl -u poseboard -f      # live logs
 ## Once it's live
 
 1. Open your URL and sign in with `ADMIN_PASSWORD`.
-2. Create a collection, drop some photos in, annotate them.
+2. Create a folder, drop some images into a tab, set a download PIN.
 3. Flip **Gallery is live**, copy the link, and open it in a private window to
    see exactly what your client sees.
 
@@ -154,7 +154,7 @@ BASE=https://your-app-url ADMIN_PASSWORD=your-password npm test
 ```
 
 That runs the same 54 checks against the live instance. It creates a test
-collection and deletes it again — run it on a fresh deployment, not on a library
+folder and deletes it again — run it on a fresh deployment, not on a library
 full of real work.
 
 ## Backups
@@ -185,6 +185,8 @@ service or rebuild the image. Your `/data` volume is untouched by updates.
 | Logs say `Refusing to start: set ADMIN_PASSWORD` | The secret isn't set on the host. Add it and redeploy — this is the safety check working. |
 | Photos disappeared after a deploy | No persistent disk mounted, or `DATA_DIR` doesn't point at it. Check the volume is mounted at `/data` and `DATA_DIR=/data`. |
 | Large uploads fail with 413 | Something in front of the app caps request size. Raise it in your proxy (`request_body max_size` in Caddy, `client_max_body_size` in nginx). Cloudflare's free plan also caps uploads. Or lower `MAX_UPLOAD_MB`. |
-| A client says the link doesn't work | The collection is a draft, or the link was reset. Check the **Gallery is live** switch, then copy the link again. |
+| A client says the link doesn't work | The folder is a draft, or the link was reset. Check the **Gallery is live** switch, then copy the link again. |
+| A client can't download | No download PIN is set on the folder (or any folder above it). Set one in **Settings** — without a PIN nothing downloads, by design. |
+| No **Send to photographer** button | No webhook URL is set on the folder and no `WEBHOOK_URL` on the server. |
 | You forgot the password | Change `ADMIN_PASSWORD` on the host and redeploy. Nothing in your library is lost. |
 | Everyone got signed out | `session.key` was recreated, which means the data volume was replaced. Sign in again — but check that the volume is really persisting. |
