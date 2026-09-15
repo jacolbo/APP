@@ -1,0 +1,30 @@
+{
+  "name": "Pose Board",
+
+  // A plain Ubuntu base plus the Node feature, rather than a versioned Node
+  // image tag: these two identifiers are the stable ones, so the Codespace
+  // keeps building even as image tags come and go.
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
+  },
+
+  "forwardPorts": [4000],
+  "portsAttributes": {
+    "4000": {
+      "label": "Pose Board",
+      "onAutoForward": "openPreview"
+    }
+  },
+
+  // Starts the app as soon as the Codespace opens, so there is nothing to type.
+  // "preview" is a throwaway password for a private Codespace — set a real
+  // ADMIN_PASSWORD before forwarding the port publicly or deploying anywhere.
+  "postAttachCommand": "ADMIN_PASSWORD=preview npm start",
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint"]
+    }
+  }
+}

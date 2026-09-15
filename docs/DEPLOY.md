@@ -25,7 +25,26 @@ This repo already contains the config each one needs: `render.yaml`, `fly.toml`,
 
 ---
 
+## Just want to look at it? — GitHub Codespaces
+
+Nothing to install, nothing to deploy. On the repository page: **Code → Codespaces
+→ Create codespace**. It builds a container, starts the app and opens it in a
+browser tab. Sign in with the password `preview`.
+
+This is for *looking*, not for clients: a Codespace stops when you stop using it,
+the forwarded port is private to your account, and the photo library disappears
+with the container. GitHub's free allowance for personal accounts covers casual
+use; check your own account's limits before leaning on it.
+
+To send links to actual clients, use one of the options below — they give the app
+a permanent address and a disk that survives a restart.
+
 ## Option A — Render (no command line)
+
+> `render.yaml` names the branch it deploys. Check that line matches the branch
+> you actually want live before you create the Blueprint — Render will happily
+> deploy an older branch without complaining.
+
 
 1. Create an account at [render.com](https://render.com) and connect your GitHub
    account so it can see `jacolbo/APP`.
@@ -140,10 +159,68 @@ sudo journalctl -u poseboard -f      # live logs
 
 ---
 
+## Option E — cPanel shared hosting
+
+**First, check whether you can.** In cPanel, look under *Software* for **Setup
+Node.js App**. If it is there, this works. If you only see PHP tools, a file
+manager and databases, it does not — this app is a Node server, and no amount of
+uploading files will make a PHP-only host run it.
+
+If you have it:
+
+1. Upload the project to a folder **outside** `public_html` — say `~/poseboard`.
+   The File Manager's *Upload* plus *Extract* on a zip is enough; no git needed.
+2. **Setup Node.js App → Create Application**
+   - *Node.js version*: 22 if offered, otherwise the newest available
+   - *Application mode*: Production
+   - *Application root*: `poseboard`
+   - *Application URL*: the domain or subdomain clients will open
+   - *Application startup file*: `app.cjs`
+3. Add environment variables in the same screen:
+   - `ADMIN_PASSWORD` — your studio password. **Required**; the app refuses to
+     start in production without it.
+   - `DATA_DIR` — somewhere outside the web root, e.g. `/home/YOURUSER/poseboard-data`
+   - `NODE_ENV` — `production`
+4. Start the app. *Run NPM Install* is offered but does nothing useful here:
+   there are no dependencies to install.
+
+### Why `app.cjs` and not `server.js`
+
+cPanel starts an app by `require()`-ing one file. This project is written in ES
+modules, and `require()` of an ES module only works on Node 22.12 and newer —
+shared hosts are often several versions behind. `app.cjs` is a three-line
+shim that loads `server.js` the way every Node version understands. Running it
+any other way (`npm start`, Docker, Fly, Render) ignores that file entirely.
+
+### The one that will actually hurt you
+
+**Keep `DATA_DIR` outside `public_html`.** If the photo library sits anywhere
+Apache serves directly, then `https://yoursite.com/data/files/img_xxx.jpg`
+hands over the original file without the request ever reaching the app — no PIN,
+no locked tab, no signed grant. The whole download gate is bypassed by a URL
+anyone can guess the shape of. The repo ships an `.htaccess` that blocks `/data`
+as a backstop, but the fix is the path, not the backstop.
+
+### Other things to expect
+
+- **Storage quota.** Shared plans commonly cap the whole account well below what
+  a year of galleries needs. Check your quota before committing to it.
+- **Upload size.** Your host may cap request bodies below `MAX_UPLOAD_MB`, in
+  which case large uploads fail at the host rather than in the app.
+- **Idle shutdown.** Passenger stops an idle app and restarts it on the next
+  request, so the first visit after a quiet spell is slow. Harmless for galleries.
+
+**Untested claim, stated plainly:** the entry point is verified to load the way
+Passenger loads it, but nobody has run this on a real cPanel host. If you hit an
+error there, the message it prints is what identifies the problem.
+
+If you are choosing hosting fresh rather than using something you already pay
+for, Option A or B will give you fewer surprises than shared hosting.
+
 ## Once it's live
 
 1. Open your URL and sign in with `ADMIN_PASSWORD`.
-2. Create a collection, drop some photos in, annotate them.
+2. Create a folder, drop some images into a tab, set a download PIN.
 3. Flip **Gallery is live**, copy the link, and open it in a private window to
    see exactly what your client sees.
 
@@ -154,7 +231,7 @@ BASE=https://your-app-url ADMIN_PASSWORD=your-password npm test
 ```
 
 That runs the same 54 checks against the live instance. It creates a test
-collection and deletes it again — run it on a fresh deployment, not on a library
+folder and deletes it again — run it on a fresh deployment, not on a library
 full of real work.
 
 ## Backups
@@ -185,6 +262,8 @@ service or rebuild the image. Your `/data` volume is untouched by updates.
 | Logs say `Refusing to start: set ADMIN_PASSWORD` | The secret isn't set on the host. Add it and redeploy — this is the safety check working. |
 | Photos disappeared after a deploy | No persistent disk mounted, or `DATA_DIR` doesn't point at it. Check the volume is mounted at `/data` and `DATA_DIR=/data`. |
 | Large uploads fail with 413 | Something in front of the app caps request size. Raise it in your proxy (`request_body max_size` in Caddy, `client_max_body_size` in nginx). Cloudflare's free plan also caps uploads. Or lower `MAX_UPLOAD_MB`. |
-| A client says the link doesn't work | The collection is a draft, or the link was reset. Check the **Gallery is live** switch, then copy the link again. |
+| A client says the link doesn't work | The folder is a draft, or the link was reset. Check the **Gallery is live** switch, then copy the link again. |
+| A client can't download | No download PIN is set on the folder (or any folder above it). Set one in **Settings** — without a PIN nothing downloads, by design. |
+| No **Send to photographer** button | No webhook URL is set on the folder and no `WEBHOOK_URL` on the server. |
 | You forgot the password | Change `ADMIN_PASSWORD` on the host and redeploy. Nothing in your library is lost. |
 | Everyone got signed out | `session.key` was recreated, which means the data volume was replaced. Sign in again — but check that the volume is really persisting. |

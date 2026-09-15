@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node test/smoke.mjs",
-    "test:ui": "node test/ui.mjs"
+    "test": "node test/smoke.mjs && node test/migrate.mjs",
+    "test:ui": "node test/ui.mjs",
+    "test:migrate": "node test/migrate.mjs"
   }
 }

@@ -1,22 +1,48 @@
 # Pose Board
 
-A small self-hosted web app for pose references: you upload your pose ideas into
-collections, and your clients open a private link to browse them and heart the
-ones they want.
+A small self-hosted web app for client galleries: you upload images into folders,
+your client opens a private link, hearts the ones they want, and sends the
+shortlist straight back to you.
 
 Two sides, one server:
 
-- **Studio** (`/`) — password protected. Create collections, drag photos in, add
-  a title/notes/tags to each pose, set the order, publish, and share the link.
-- **Gallery** (`/s/<link>`) — no account, no app. Your client opens the link,
-  browses full-screen, hearts the poses they like and can leave a note on each
-  one. You see every pick back in the studio.
+- **Studio** (`/`) — password protected. Build folders (nested as deep as you
+  like), give each one tabs, drop images in, set a download PIN, publish, and
+  share the link.
+- **Gallery** (`/g/<link>`) — no account, no app. Your client browses, taps to
+  favourite, types the PIN to download, and presses **Send to photographer**.
 
 It has **no npm dependencies** — only Node's built-in modules — so there is
 nothing to build, no native packages to compile, and nothing to break on a
 version bump.
 
+## How it is organised
+
+```
+Smith Wedding                folder — publishable, has its own link and PIN
+├── Previews         tab     open to anyone with the link, no downloads
+├── Final images     tab     🔒 hidden until the PIN is entered, downloadable
+└── Ceremony                 folder inside a folder, nested up to 20 levels
+    ├── Previews     tab
+    └── Final images tab
+```
+
+**Tabs are what decide whether an image is a preview or a deliverable.** A tab is
+either open to anyone holding the link, or locked behind the gallery PIN — and
+separately, downloadable or not. A locked tab is not merely greyed out: its
+images are left out of the page entirely until the PIN is accepted.
+
+Any folder at any depth can be published with its own link, so you can share a
+whole wedding or just the ceremony.
+
 ## Quick start
+
+**Easiest, no terminal:** double-click `start.command` (macOS/Linux) or
+`start.bat` (Windows). It checks for Node, makes you a studio password the
+first time, starts the app and opens it in your browser. The password is saved
+in `data/studio-password.txt`.
+
+**From a terminal:**
 
 ```bash
 git clone <this repo>
@@ -31,23 +57,23 @@ work, but that older floor is declared rather than tested here.
 
 ## How you'd actually use it
 
-1. **New collection** — one per shoot, client, or style ("Maternity — golden
-   hour", "Sarah & Tom", "Studio headshots"). The intro note you write here is
-   shown at the top of your client's gallery.
-2. **Drop photos in** — drag a pile of images onto the drop zone, or use *Choose
-   files*. JPEG, PNG, WebP, GIF, AVIF and HEIC are accepted.
-3. **Annotate** — click a pose to add a title ("Hands in pockets, looking away"),
-   notes for the shoot, and tags. Drag tiles to set the order your client sees,
-   and mark one as the cover.
-4. **Publish and share** — flip *Gallery is live*, copy the link, send it. Add a
-   PIN in **Settings** if you want a second gate.
-5. **Read their picks** — hearts show up on your tiles, and a panel at the bottom
-   of the collection lists every pick by client, with their notes. *Only client
-   picks* filters the grid down to the shortlist.
+1. **New folder** — one per shoot or client. It arrives with two tabs ready:
+   *Previews* (open, no downloads) and *Final images* (PIN-only, downloadable).
+2. **Drop images in** — pick a tab, then drag a pile of images onto the drop
+   zone. JPEG, PNG, WebP, GIF, AVIF and HEIC are accepted. **You resize before
+   uploading** — the app never re-processes your files on the server.
+3. **Add folders inside** if a shoot has parts ("Ceremony", "Reception"). Each
+   one has its own tabs and can be published on its own link.
+4. **Set a download PIN** in *Settings*. Without one, nothing downloads and
+   PIN-only tabs stay shut — the app fails closed rather than falling open.
+5. **Set where selections go** — a webhook URL in *Settings*, or `WEBHOOK_URL`
+   for every folder at once.
+6. **Publish and share** — flip *Gallery is live*, copy the link, send it.
+7. **Read their picks** — hearts show up on your tiles and a panel at the bottom
+   lists every pick by client, with their name and email if they gave one.
 
-Unpublishing a collection takes the link offline immediately. **Reset share link**
-(in Settings) issues a new link and permanently kills the old one — useful if a
-link went to the wrong person.
+Unpublishing takes the link offline immediately. **Reset share link** (in
+Settings) issues a new link and permanently kills the old one.
 
 ## Configuration
 
@@ -59,7 +85,9 @@ All optional except the password.
 | `PORT` | `4000` | Port to listen on. |
 | `HOST` | `0.0.0.0` | Interface to bind. Use `127.0.0.1` behind a reverse proxy. |
 | `DATA_DIR` | `./data` | Where photos and `db.json` are stored. |
-| `MAX_UPLOAD_MB` | `25` | Per-photo upload limit. Larger files are resized in the browser before upload. |
+| `MAX_UPLOAD_MB` | `25` | Per-image upload limit. Larger files are resized in the browser before upload. |
+| `WEBHOOK_URL` | none | Default address for **Send to photographer**. A folder can override it. The server refuses to start if this is not a valid http(s) URL. |
+| `WEBHOOK_SECRET` | none | When set, each webhook carries `X-Signature: sha256=<hmac of the body>` so your endpoint can verify it. |
 
 ## Your data
 
@@ -67,10 +95,16 @@ Everything lives in `DATA_DIR` (`./data` by default):
 
 ```
 data/
-  db.json        collections, photo metadata, client picks
+  db.json        folders, tabs, image metadata, client selections
+  db.json.v1.bak the pre-upgrade file, kept once if you came from an older version
   session.key    key that signs your login cookie (delete it to sign out everywhere)
   files/         the uploaded images, plus a small thumbnail for each
 ```
+
+**Upgrading from an older Pose Board** needs no action: on first start each
+collection becomes a root folder with one open tab, share links and files are
+untouched, and the old view-PIN becomes the download PIN (hashed on the way in).
+The original file is kept as `db.json.v1.bak`.
 
 **Backing up is copying that folder.** It is plain JSON and ordinary image files —
 nothing proprietary. `data/` is gitignored, so your photos never end up in the
@@ -100,56 +134,167 @@ that terminates TLS, so the links you send are `https://`. It sets the `Secure`
 flag on the login cookie automatically when it sees `X-Forwarded-Proto: https`,
 so pass that header through.
 
+## Beyond the basics
+
+- **Download everything at once.** A client's whole selection comes down as one
+  zip, and the studio can pull a whole tab the same way. The archive is written
+  by hand with Node's `zlib` — no dependency — and is PIN-gated exactly like a
+  single download.
+- **Your branding.** Set an accent colour and upload your logo per folder, and
+  the client's gallery uses them. A sub-folder inherits from the folder above.
+- **Watermarks.** Set a watermark on a folder and it is burned into images as
+  they upload — by the same browser canvas that already makes thumbnails, since
+  the server has no image library. It goes on tabs clients cannot download and
+  never on the deliverables. Affects new uploads only.
+- **Stars and notes.** Clients can rate an image and leave a note on it without
+  favouriting it, and both survive un-favouriting. The studio sees them, and the
+  handoff carries them.
+- **Expiry.** Give a gallery a closing date and the link stops working after it,
+  with `gallery.expired` sent to your software. Clearing the date reopens it.
+- **A few numbers.** Views, downloads, picks and how many people picked. Views
+  counts page loads, not unique visitors — the studio screen says so.
+
+## Sending selections to your software
+
+When a client presses **Send to photographer**, the server POSTs JSON to the
+folder's webhook URL (or `WEBHOOK_URL`):
+
+```json
+{
+  "galleryId": "fld_xxxxxxxxxxxx",
+  "galleryTitle": "Smith Wedding",
+  "clientName": "Ana",
+  "clientEmail": "ana@example.com",
+  "total_selected": 2,
+  "selected_files": ["IMG_0041.jpg", "IMG_0052.jpg"],
+  "selections": [
+    { "imageId": "img_…", "fileName": "IMG_0041.jpg",
+      "folderPath": "Smith Wedding / Ceremony", "tab": "Final images", "note": "" }
+  ],
+  "sentAt": "2026-01-01T12:00:00.000Z"
+}
+```
+
+Other events fire the same way: `gallery.created`, `gallery.published`,
+`gallery.expired`, `comment.posted`, and `file.uploaded`. All but `file.uploaded`
+are on by default — a studio dropping 500 images should not fire 500 requests at
+their own software unless they asked for it. Per-folder selection of events is
+in the API (`webhookEvents`).
+
+**Only HTTP 200 counts as delivered.** A 201, a redirect, a timeout (10s) or an
+unreachable host all show the client an error saying nothing was sent — they are
+never told it worked when it did not. There is no automatic retry; the client can
+press the button again, and a silent retry risks you seeing the same selection
+twice. Handoffs are rate limited to 6 per 15 minutes per client.
+
+## How favourites are tied to a person
+
+There are no client accounts. A random id in the browser's local storage is what
+links a set of favourites to one visitor, so a refresh — or coming back tomorrow
+on the same browser — keeps them.
+
+After their first pick the gallery asks, once, for a name and email. **It is
+skippable and the gallery works without it**, but giving it does two things:
+
+- your picks panel and the handoff webhook show *who* picked, instead of an
+  anonymous session id
+- the same person can open the gallery on another device, press **Picked on
+  another device?**, give the same email, and get their list back
+
+**The trade-off, stated plainly:** that second one means anyone who already has
+the gallery link and correctly guesses a client's email address can pull up that
+client's picks. There is no email verification — sending a confirmation link
+would need an outbound mail service, which this app deliberately does not have.
+The lookup is rate limited to 8 tries per 15 minutes per address per gallery, and
+it returns nothing but the picks. If that trade is wrong for you, remove the
+`/restore` route in `lib/api.js`; recording the email still works without it.
+
+## Rules the app enforces for you
+
+- **A folder that has tabs must keep at least one open to anyone with the link.**
+  Lock every tab and a client who has not been given the PIN sees an empty
+  gallery with nothing explaining why, so the app refuses the change.
+- **A download PIN can have a use limit.** Set one in *Settings* if you would
+  rather a PIN did not get passed around; each accepted unlock spends one use,
+  and a wrong PIN never does. Setting a new PIN resets the count, and you can
+  reset it by hand.
+- **Nothing downloads without a PIN.** There is no "downloads are open" mode.
+
 ## What the security actually is
 
 Stated plainly, so you can decide what to put in it:
 
-- **One password for the studio side.** It is compared in constant time, a signed
+- **One password for the studio side.** Compared in constant time, a signed
   cookie keeps you signed in for 14 days, and failed sign-ins from one address
   are throttled (8 tries per 15 minutes). There are no user accounts and no
   password reset — you set it with an environment variable.
-- **Share links are unguessable, not secret.** Each link holds a random 96-bit id.
-  Nobody will guess one, but anyone who *has* one can open a published gallery,
-  and can forward it. Reset the link if that matters.
-- **The PIN is a light second gate**, not real authentication. It is sent in a
-  request header (so it stays out of access logs), but it is a short number and
-  it is not rate-limited. Treat it as "keeps the wrong client out", not "keeps an
-  attacker out".
-- **Photos in a published collection are readable by anyone with the photo's URL**
-  — again an unguessable id, and not listed anywhere. Photos in a draft
-  collection are only readable while signed in.
-- **Client picks are not authenticated.** A client is remembered by a random key
-  in their browser's local storage and types their own name. Anyone with the link
-  can heart a pose under any name. It is a shortlisting tool, not a signature.
+- **Share links are unguessable, not secret.** Each link holds a random 96-bit
+  id. Nobody will guess one, but anyone who *has* one can open a published
+  gallery, and can forward it. Reset the link if that matters.
+- **Client payloads never contain a file path.** Every image is served through an
+  opaque `/i/`, `/t/` or `/d/` route keyed by id. Nothing under `DATA_DIR` is
+  reachable by path, and no stored filename appears in any response.
+- **A PIN-only tab is absent, not hidden.** Its image ids and URLs are not in the
+  page load at all, so there is nothing in the HTML to dig out. Only after the
+  PIN is accepted does a second request return them.
+- **Downloads always require the PIN.** Entering it mints a 15-minute,
+  HMAC-signed, HttpOnly cookie scoped to one folder subtree. With no PIN set,
+  nothing unlocks and nothing downloads — it fails closed.
+- **PINs are stored as scrypt hashes**, never in the clear, and guessing is rate
+  limited to 8 tries per 15 minutes per gallery per address. Be clear-eyed about
+  the limit: a 4-digit PIN is 10,000 possibilities, so if `db.json` itself leaks
+  the hash gives way quickly. The rate limit is the real protection, and the PIN
+  is "keeps the wrong client out", not "keeps an attacker out".
+- **A client who has downloaded a file can re-share it.** Nothing here stops
+  that, and nothing can.
+- **Images in an open tab of a published folder are readable by anyone with the
+  image URL** — an unguessable id, not listed anywhere. Draft folders are only
+  readable while signed in, and a draft folder hides everything beneath it.
+- **Client selections are not authenticated.** A client is remembered by a random
+  id in their browser's local storage, and any name or email they type is taken
+  at face value — nothing is verified. Anyone with the link can heart an image
+  under any name. It is a shortlisting tool, not a signature. See *How
+  favourites are tied to a person* above for what restore-by-email does and does
+  not protect.
 - **No HTTPS on its own.** Without a proxy in front, the password and PIN travel
   in the clear. Don't skip the TLS step.
 - **No antivirus/content scanning** of uploads, and no EXIF stripping — files are
   stored as you uploaded them (location data included, if your camera wrote it).
 
-This is a single-photographer tool. It is not hardened for hostile traffic on the
-open internet, and `db.json` is a JSON file, not a concurrent database — fine for
-one person and thousands of photos, not for a multi-tenant service.
+This is a single-studio tool. It is not hardened for hostile traffic on the open
+internet, and `db.json` is a JSON file held in memory by one process, not a
+concurrent database — fine for one person and thousands of images, not for a
+multi-tenant service.
 
 ## Tests
 
 ```bash
-npm test        # 54 API checks — starts its own server, no dependencies
-npm run test:ui # 33 browser checks — needs Playwright
+npm test          # 137 API checks + 17 migration checks — starts its own server
+npm run test:ui   # 48 browser checks — needs Playwright
 ```
 
-`npm test` covers auth, uploads, access control, ordering, sharing, PINs, picks
-and deletion, against a real server on a temporary data directory. Point it at a
-deployed instance to check a fresh install (it creates and deletes a test
-collection):
+`npm test` covers auth, the folder tree (including the depth cap and the
+cannot-move-a-folder-inside-itself rule), tabs, uploads, publishing, favourites,
+the PIN gate and its use limit, downloads, identifying a client and restoring
+their picks, and the handoff webhook — the last against a real local HTTP
+receiver, not a stub. It asserts directly that a locked tab's image ids
+never appear in a page load. A second suite migrates a real v1 `db.json` and
+checks the old share link, files and picks all survive.
+
+Point it at a deployed instance to check a fresh install (it creates and deletes
+a test folder):
 
 ```bash
 BASE=https://your-app-url ADMIN_PASSWORD=your-password npm test
 ```
 
-The browser suite drives the actual UI in Chromium — sign in, upload three real
-images, edit a pose, publish, open the gallery as a client, heart poses, leave a
-note, the PIN gate, and the phone layout. It skips itself with a note if
-Playwright is not installed:
+The browser suite drives the actual UI in Chromium — sign in, build a nested
+folder, upload real images into two tabs, publish, then open the gallery as a
+client: favourite, answer the who-are-you prompt, refresh to prove it persisted,
+restore the same picks in a second browser from the email alone, hit the PIN gate
+with a wrong then a right PIN, download a file, hand the selection over, and
+confirm a failing webhook never claims success. It also checks the phone layout. It skips itself
+with a note if Playwright is not installed:
 
 ```bash
 npm install --no-save playwright && npx playwright install chromium
@@ -159,18 +304,22 @@ npm run test:ui            # SHOTS=/tmp/shots npm run test:ui  keeps screenshots
 ## How it fits together
 
 ```
-server.js              HTTP server: static files, image routes, shutdown
-lib/api.js             every /api route, upload handling, access control
-lib/store.js           JSON store + atomic writes + file management
-lib/auth.js            signed session cookies, login throttle
-lib/util.js            request/response helpers, input trimming
-public/index.html+js   the studio
-public/share.html+js   the client gallery
-public/app.css         one stylesheet for both
-test/                  API and browser suites
+server.js               HTTP server: static files, image routes, shutdown
+lib/api.js              every /api route, upload handling, access control
+lib/store.js            folder tree, JSON store, atomic writes, v1 migration
+lib/auth.js             signed session cookies, login throttle
+lib/pin.js              scrypt hashing and constant-time checking of PINs
+lib/grant.js            short-lived signed download grants
+lib/webhook.js          the handoff POST
+lib/zip.js              a small ZIP writer, so bulk download needs no dependency
+lib/util.js             request/response helpers, input trimming
+public/index.html+js    the studio
+public/gallery.html+js  the client gallery
+public/app.css          one stylesheet for both
+test/                   API, migration and browser suites
 ```
 
-Two design notes worth knowing if you change things:
+Design notes worth knowing if you change things:
 
 - **Uploads are raw bodies, not multipart.** The browser sends the image bytes as
   the request body with the filename in a header, so the server never parses a
@@ -179,3 +328,8 @@ Two design notes worth knowing if you change things:
   original. That is why the server needs no image library. If a browser cannot
   decode a format (HEIC outside Safari, for example), the upload still succeeds
   and the grid falls back to the full-size image.
+- **Nothing is resized on the server.** You decide what a preview is by which tab
+  you put it in.
+- **Folder depth is capped at 20.** Not because the schema needs it — tree walks
+  recurse, breadcrumbs have to render, and the whole dataset lives in memory.
+  Change `MAX_DEPTH` in `lib/store.js` if you truly need more.

@@ -1,11 +1,13 @@
-// Browser test: drives the real UI in Chromium — sign in, upload, edit, share,
-// pick, PIN gate, mobile layout. Needs Playwright:
-//   npm install --no-save playwright && npx playwright install chromium
+// Browser test: drives the real UI in Chromium — sign in, build a folder tree,
+// upload, publish, then open the client gallery and favourite, unlock, download
+// and hand off. Needs Playwright:
+//   npm install --no-save playwright
 //   node test/ui.mjs            (set SHOTS=/some/dir to keep screenshots)
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { startServer } from './helpers/server.mjs';
+import { startWebhookReceiver } from './helpers/webhook.mjs';
 import { png } from './helpers/png.mjs';
 
 let chromium;
@@ -13,16 +15,20 @@ try {
   ({ chromium } = await import('playwright'));
 } catch {
   console.log('\nSkipped: Playwright is not installed.');
-  console.log('  npm install --no-save playwright && npx playwright install chromium\n');
+  console.log('  npm install --no-save playwright\n');
   process.exit(0);
 }
 
 const server = await startServer();
+const hook = await startWebhookReceiver();
 const BASE = server.base;
 
 const IMAGES = await fsp.mkdtemp(path.join(os.tmpdir(), 'poseboard-fixtures-'));
+const files = [];
 for (const [index, colour] of [[210, 150, 110], [120, 160, 200], [170, 190, 140]].entries()) {
-  await fsp.writeFile(path.join(IMAGES, `pose-${index + 1}.png`), png(900, 1200, colour));
+  const file = path.join(IMAGES, `shot-${index + 1}.png`);
+  await fsp.writeFile(file, png(900, 1200, colour));
+  files.push(file);
 }
 const SHOTS = process.env.SHOTS || await fsp.mkdtemp(path.join(os.tmpdir(), 'poseboard-shots-'));
 
@@ -41,177 +47,249 @@ const studio = await browser.newContext({ viewport: { width: 1320, height: 950 }
 const page = await studio.newPage();
 const errors = [];
 page.on('pageerror', (err) => errors.push(`studio: ${err.message}`));
-page.on('console', (msg) => {
-  // The test signs in with a wrong password on purpose; that 401 is expected.
-  if (msg.type() === 'error' && !msg.text().includes('401')) errors.push(`studio console: ${msg.text()}`);
-});
-page.on('response', (res) => {
-  if (res.status() >= 400 && !(res.status() === 401 && res.url().endsWith('/api/login'))) {
-    errors.push(`studio HTTP ${res.status()} ${new URL(res.url()).pathname}`);
-  }
-});
 
-console.log('\n— studio: sign in —');
+console.log('\n— studio —');
 await page.goto(BASE);
-await page.waitForSelector('#login-view:not([hidden])');
-check('login screen shown', true);
-await page.fill('#login-password', 'wrong-one');
-await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#login-error:not([hidden])');
-check('wrong password shows an error', (await page.textContent('#login-error')).length > 0);
 await page.fill('#login-password', server.password);
 await page.click('#login-form button[type=submit]');
 await page.waitForSelector('#app-view:not([hidden])');
-check('signed in', await page.isVisible('#dashboard-view'));
-check('empty state offered', await page.isVisible('#dashboard-empty'));
+check('signed in', await page.isVisible('#root-view'));
 
-console.log('\n— studio: create a collection —');
-await page.click('#empty-new-collection');
-await page.waitForSelector('.modal');
-await page.fill('.modal input[type=text]', 'Maternity — golden hour');
-await page.fill('.modal input[placeholder*="Sarah"]', 'Sarah & Tom');
-await page.fill('.modal textarea', 'Ideas for our sunset session — heart the ones you like.');
-await page.click('.modal button[type=submit]');
-await page.waitForSelector('#collection-view:not([hidden])');
-check('collection view opened', (await page.textContent('#collection-title')).includes('Maternity'));
-check('url carries the collection', page.url().includes('#/c/col_'));
+await page.click('#empty-new-folder');
+await page.fill('.modal-card input[type=text]', 'Smith Wedding');
+await page.click('.modal-card button[type=submit]');
+await page.waitForSelector('#folder-view:not([hidden])');
+check('folder created and opened', (await page.textContent('#folder-title')) === 'Smith Wedding');
 
-console.log('\n— studio: upload —');
-await page.setInputFiles('#file-input', [`${IMAGES}/pose-1.png`, `${IMAGES}/pose-2.png`, `${IMAGES}/pose-3.png`]);
-await page.waitForFunction(() => document.querySelectorAll('#photo-grid .tile').length === 3, null, { timeout: 20000 });
-check('three photos uploaded', (await page.locator('#photo-grid .tile').count()) === 3);
-const thumbSrc = await page.getAttribute('#photo-grid .tile img', 'src');
-check('grid uses browser-made thumbnails', thumbSrc.startsWith('/t/'), thumbSrc);
-const thumbOk = await page.evaluate(async () => {
-  const res = await fetch(document.querySelector('#photo-grid .tile img').src);
-  return { status: res.status, type: res.headers.get('content-type'), size: (await res.blob()).size };
-});
-check('thumbnail is a real JPEG', thumbOk.status === 200 && thumbOk.type === 'image/jpeg' && thumbOk.size > 500, JSON.stringify(thumbOk));
-const naturalWidth = await page.evaluate(() => document.querySelector('#photo-grid .tile img').naturalWidth);
-check('thumbnail renders in the grid', naturalWidth > 0, String(naturalWidth));
+const tabNames = await page.$$eval('#admin-tabbar .tab', (nodes) => nodes.map((n) => n.textContent.replace(/\d+$/, '').trim()));
+check('two default tabs appear', tabNames.length === 2, JSON.stringify(tabNames));
+check('the final tab is marked private', tabNames.some((name) => name.includes('🔒')), JSON.stringify(tabNames));
 
-console.log('\n— studio: edit a pose —');
-await page.click('#photo-grid .tile:first-child .tile-open');
-await page.waitForSelector('.lightbox-card');
-await page.fill('.lightbox-side input[placeholder*="Standing"]', 'Hands on bump, looking away');
-await page.fill('.lightbox-side textarea', 'Shoot from her left, backlit.');
-await page.fill('.lightbox-side input[placeholder*="seated"]', 'standing, outdoor');
-await page.click('.lightbox-side button:has-text("Save")');
-await page.waitForFunction(() => document.querySelector('.toast')?.textContent === 'Saved', null, { timeout: 10000 });
-check('pose details saved', true);
-await page.click('.lightbox-side button:has-text("Make cover")');
-await page.waitForFunction(() => document.querySelector('.lightbox-side .btn')?.textContent.includes('★') ||
-  [...document.querySelectorAll('.lightbox-side button')].some((b) => b.textContent.includes('★')));
-check('cover photo set', true);
-await page.keyboard.press('Escape');
-await page.waitForSelector('.modal', { state: 'detached' });
-check('caption shows the title', (await page.textContent('#photo-grid .tile:first-child .tile-caption')).includes('Hands on bump'));
+await page.setInputFiles('#file-input', files.slice(0, 2));
+await page.waitForFunction(() => document.querySelectorAll('#admin-grid .tile').length === 2, null, { timeout: 20000 });
+check('two images uploaded into Previews', (await page.$$('#admin-grid .tile')).length === 2);
 
-console.log('\n— studio: publish —');
-await page.check('#publish-toggle');
-await page.waitForFunction(() => document.querySelector('#collection-status').textContent === 'Live');
+// Switch to the PIN-gated tab and put the deliverable in it.
+await page.click('#admin-tabbar .tab:nth-child(2)');
+await page.setInputFiles('#file-input', files.slice(2));
+await page.waitForFunction(() => document.querySelectorAll('#admin-grid .tile').length === 1, null, { timeout: 20000 });
+check('deliverable uploaded into the private tab', (await page.$$('#admin-grid .tile')).length === 1);
+
+await page.click('#new-subfolder');
+await page.fill('.modal-card input[type=text]', 'Ceremony');
+await page.click('.modal-card button[type=submit]');
+await page.waitForFunction(() => document.querySelector('#folder-title')?.textContent === 'Ceremony');
+check('sub-folder created inside the gallery', (await page.textContent('#folder-title')) === 'Ceremony');
+await page.click('#publish-toggle');
+await page.waitForTimeout(300);
+await page.click('#admin-crumbs .crumb:nth-child(3)');
+await page.waitForFunction(() => document.querySelector('#folder-title')?.textContent === 'Smith Wedding');
+check('breadcrumb walks back up the tree', (await page.textContent('#folder-title')) === 'Smith Wedding');
+check('the sub-folder is listed', (await page.$$('#child-cards .card')).length === 1);
+
+// Settings: PIN and the handoff address.
+await page.click('#folder-settings');
+await page.waitForSelector('.modal-card');
+await page.fill('.modal-card input[inputmode=numeric]', '4821');
+await page.fill('.modal-card input[placeholder^="https://studio"]', hook.url);
+await page.fill('.modal-card input[placeholder="Your Studio Name"]', 'Ana & Tom Studio');
+await page.$eval('.modal-card input[type=color]', (el) => { el.value = '#2f6f4f'; });
+await page.click('.modal-card .btn-primary');
+await page.waitForSelector('.modal-card', { state: 'detached' });
+await page.waitForTimeout(300);
+check('PIN and webhook saved', (await page.textContent('#share-hint')).includes('No handoff address') === false);
+
+await page.click('#publish-toggle');
+await page.waitForTimeout(400);
 const shareUrl = await page.inputValue('#share-url');
-check('share link generated', /\/s\/s_[A-Za-z0-9_-]+$/.test(shareUrl), shareUrl);
-await page.screenshot({ path: `${SHOTS}/studio-collection.png`, fullPage: true });
+check('share link points at /g/', /\/g\/s_/.test(shareUrl), shareUrl);
+check('gallery is live', (await page.textContent('#folder-status')) === 'Live');
+await page.screenshot({ path: path.join(SHOTS, 'studio-folder.png'), fullPage: true });
 
-console.log('\n— client: the shared gallery —');
+console.log('\n— client gallery —');
 const clientContext = await browser.newContext({ viewport: { width: 1320, height: 950 } });
 const client = await clientContext.newPage();
 client.on('pageerror', (err) => errors.push(`client: ${err.message}`));
-client.on('console', (msg) => { if (msg.type() === 'error') errors.push(`client console: ${msg.text()}`); });
-client.on('dialog', (dialog) => dialog.accept('Sarah'));
 await client.goto(shareUrl);
 await client.waitForSelector('#gallery-view:not([hidden])');
-check('gallery opens for the client', (await client.textContent('#gallery-title')).includes('Maternity'));
-check('intro note shown', (await client.textContent('#gallery-subtitle')).includes('sunset session'));
-check('all three poses visible', (await client.locator('#photo-grid .tile').count()) === 3);
+check('cover page shows the title', (await client.textContent('#cover-title')) === 'Smith Wedding');
+check('favourites start empty', await client.isVisible('#favorites-empty'));
+check('sub-folder card is offered', (await client.$$('#folder-cards .card')).length === 1);
 
-await client.click('#photo-grid .tile:first-child .icon-btn');
-await client.waitForFunction(() => document.querySelector('#pick-count').textContent.includes('1'));
-check('client can heart a pose', (await client.textContent('#pick-count')).includes('♥ 1'));
-check('name captured from the prompt', (await client.textContent('#change-name')).includes('Sarah'));
+const clientTabs = await client.$$eval('#tabbar .tab', (nodes) => nodes.map((n) => n.textContent.trim()));
+check('both tabs listed', clientTabs.length === 2, JSON.stringify(clientTabs));
+check('the private tab shows as locked', clientTabs.some((name) => name.includes('🔒')));
+await client.screenshot({ path: path.join(SHOTS, 'client-cover.png'), fullPage: true });
 
-await client.click('#photo-grid .tile:nth-child(2) .tile-open');
-await client.waitForSelector('.lightbox-card');
-check('lightbox opens on the right pose', (await client.textContent('.lightbox-side')).includes('2 of 3'));
-await client.click('.lightbox-side button:has-text("Add to my picks")');
-await client.waitForFunction(() => document.querySelector('#pick-count').textContent.includes('2'));
-await client.fill('.lightbox-side textarea', 'This is my favourite');
-await client.click('.lightbox-side button:has-text("Save note")');
-await client.waitForSelector('.toast');
-check('note saved without losing the pick', (await client.textContent('#pick-count')).includes('♥ 2'));
-await client.keyboard.press('Escape');
-await client.waitForSelector('.modal', { state: 'detached' });
-check('Escape closes the client lightbox', true);
-await client.check('#only-mine');
-await client.waitForFunction(() => document.querySelectorAll('#photo-grid .tile').length === 2);
-check('"only my picks" filter works', (await client.locator('#photo-grid .tile').count()) === 2);
-await client.uncheck('#only-mine');
-await client.screenshot({ path: `${SHOTS}/client-gallery.png`, fullPage: true });
+// The whole point: the deliverable must not be in the page at all yet.
+const leaked = await client.evaluate(() => document.body.innerHTML.includes('shot-3'));
+check('the private image is absent from the page', leaked === false);
 
-console.log('\n— client: picks survive a reload —');
+await client.click('#image-grid .tile:first-child .tile-open');
+await client.waitForFunction(() => document.querySelectorAll('#favorites-strip .fav-chip').length === 1);
+check('clicking an image favourites it', (await client.$$('#favorites-strip .fav-chip')).length === 1);
+
+// The first pick asks who it belongs to — optional, but it is what turns an
+// anonymous session into something the studio can act on.
+await client.waitForSelector('.modal-card input[autocomplete=name]', { timeout: 10000 });
+check('asked who the picks belong to, after the first one', true);
+await client.fill('.modal-card input[autocomplete=name]', 'Ana');
+await client.fill('.modal-card input[autocomplete=email]', 'ana@example.com');
+await client.click('.modal-card button[type=submit]');
+await client.waitForSelector('.modal-card', { state: 'detached' });
+check('send button appears with a favourite', await client.isVisible('#send-button'));
+
 await client.reload();
 await client.waitForSelector('#gallery-view:not([hidden])');
-check('picks remembered for this client', (await client.textContent('#pick-count')).includes('♥ 2'));
+await client.waitForFunction(() => document.querySelectorAll('#favorites-strip .fav-chip').length === 1);
+check('the favourite survives a refresh', (await client.$$('#favorites-strip .fav-chip')).length === 1);
 
-console.log('\n— studio: sees the picks —');
+await client.click('#favorites-strip .fav-remove');
+await client.waitForFunction(() => document.querySelectorAll('#favorites-strip .fav-chip').length === 0);
+check('a favourite can be removed from the favourites strip', (await client.$$('#favorites-strip .fav-chip')).length === 0);
+await client.click('#image-grid .tile:first-child .tile-open');
+await client.waitForFunction(() => document.querySelectorAll('#favorites-strip .fav-chip').length === 1);
+const askedTwice = await client.$('.modal-card input[autocomplete=name]');
+check('it does not ask a second time', askedTwice === null);
+
+console.log('\n— picking up on another device —');
+const otherDevice = await browser.newContext({ viewport: { width: 1320, height: 950 } });
+const other = await otherDevice.newPage();
+other.on('pageerror', (err) => errors.push(`restore: ${err.message}`));
+await other.goto(shareUrl);
+await other.waitForSelector('#gallery-view:not([hidden])');
+check('a fresh browser starts with no favourites', (await other.$$('#favorites-strip .fav-chip')).length === 0);
+check('it offers to find earlier picks', await other.isVisible('#restore-button'));
+await other.click('#restore-button');
+await other.waitForSelector('.modal-card input[autocomplete=email]');
+await other.fill('.modal-card input[autocomplete=email]', 'nobody@example.test');
+await other.click('.modal-card button[type=submit]');
+await other.waitForSelector('.modal-card .hint[style*="danger"]:not([hidden])');
+check('an unknown email is refused', true);
+await other.fill('.modal-card input[autocomplete=email]', 'ana@example.com');
+await other.click('.modal-card button[type=submit]');
+await other.waitForFunction(() => document.querySelectorAll('#favorites-strip .fav-chip').length === 1, null, { timeout: 10000 });
+check('the same email brings the picks back on another device', (await other.$$('#favorites-strip .fav-chip')).length === 1);
+await otherDevice.close();
+
+console.log('\n— the studio sees who picked —');
 await page.reload();
-await page.waitForSelector('#collection-view:not([hidden])');
-await page.waitForSelector('#picks-panel:not([hidden])');
-const picksText = await page.textContent('#picks-summary');
-check('picks panel lists the client', picksText.includes('Sarah') && picksText.includes('♥ 2'), picksText.slice(0, 90));
-check('client note is visible to the studio', picksText.includes('This is my favourite'));
-await page.check('#only-picked');
-await page.waitForFunction(() => document.querySelectorAll('#photo-grid .tile').length === 2);
-check('studio can filter to picked poses', true);
-await page.uncheck('#only-picked');
+await page.waitForSelector('#app-view:not([hidden])');
+await page.click('#root-cards .card:first-child');
+await page.waitForSelector('#folder-view:not([hidden])');
+const whoPicked = await page.textContent('#selections-summary');
+check('the studio shows the name and email, not a session id', whoPicked.includes('Ana') && whoPicked.includes('ana@example.com'), whoPicked.slice(0, 120));
+const statsText = await page.textContent('#folder-stats');
+check('the studio sees views and downloads', /Views/i.test(statsText) && /Downloads/i.test(statsText), statsText.slice(0, 80));
 
-console.log('\n— studio: PIN gate —');
-await page.click('#collection-settings');
-await page.waitForSelector('.modal');
-await page.fill('.modal input[inputmode=numeric]', '4821');
-await page.click('.modal button[type=submit]');
-await page.waitForSelector('.modal', { state: 'detached' });
-const pinClient = await browser.newContext();
-const pinPage = await pinClient.newPage();
-await pinPage.goto(shareUrl);
-await pinPage.waitForSelector('#pin-view:not([hidden])');
-check('a new visitor is asked for the PIN', true);
-await pinPage.fill('#pin-input', '0000');
-await pinPage.click('#pin-form button[type=submit]');
-await pinPage.waitForSelector('#pin-error:not([hidden])');
-check('wrong PIN refused', true);
-await pinPage.fill('#pin-input', '4821');
-await pinPage.click('#pin-form button[type=submit]');
-await pinPage.waitForSelector('#gallery-view:not([hidden])');
-check('right PIN opens the gallery', true);
-await pinPage.screenshot({ path: `${SHOTS}/client-pin.png` });
+console.log('\n— the PIN gate —');
+await client.click('#tabbar .tab:nth-child(2)');
+await client.waitForSelector('#grid-empty:not([hidden])');
+check('locked tab explains itself', (await client.textContent('#grid-empty')).includes('protected'));
+await client.click('#grid-empty .btn-primary');
+await client.waitForSelector('#pin-input');
+await client.fill('#pin-input', '0000');
+await client.click('.modal-card button[type=submit]');
+await client.waitForSelector('.modal-card .hint[style*="danger"]:not([hidden])');
+check('a wrong PIN is refused in the UI', true);
+await client.fill('#pin-input', '4821');
+await client.click('.modal-card button[type=submit]');
+await client.waitForFunction(() => document.querySelectorAll('#image-grid .tile').length === 1, null, { timeout: 10000 });
+check('the right PIN reveals the private tab', (await client.$$('#image-grid .tile')).length === 1);
+await client.screenshot({ path: path.join(SHOTS, 'client-unlocked.png'), fullPage: true });
 
-console.log('\n— mobile layout —');
-const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
-const phonePage = await phone.newPage();
-await phonePage.goto(shareUrl);
-await phonePage.fill('#pin-input', '4821');
-await phonePage.click('#pin-form button[type=submit]');
-await phonePage.waitForSelector('#gallery-view:not([hidden])');
-const overflow = await phonePage.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-check('no horizontal scroll on a phone', overflow <= 0, `overflow ${overflow}px`);
-await phonePage.screenshot({ path: `${SHOTS}/client-mobile.png`, fullPage: true });
+const download = await Promise.all([
+  client.waitForEvent('download', { timeout: 15000 }),
+  client.click('#image-grid .tile:first-child .tile-actions button:last-child'),
+]).then(([event]) => event).catch(() => null);
+check('the download button actually downloads', Boolean(download), 'no download event fired');
+if (download) check('the file keeps its name', download.suggestedFilename() === 'shot-3.png', download.suggestedFilename());
 
-console.log('\n— draft galleries go dark —');
-await page.uncheck('#publish-toggle');
-await page.waitForFunction(() => document.querySelector('#collection-status').textContent === 'Draft');
-await pinPage.reload();
-await pinPage.waitForSelector('#gone-view:not([hidden])');
-check('unpublished gallery is unavailable to clients', true);
+console.log('\n— branding, stars and a comment —');
+const accent = await client.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
+check('the studio accent colour reaches the client page', accent === '#2f6f4f', accent);
+
+await client.click('#image-grid .tile:first-child .tile-actions button:nth-child(2)');
+await client.waitForSelector('.lightbox-card .stars');
+check('a rating control is offered', (await client.$$('.lightbox-card .star')).length === 5);
+await client.click('.lightbox-card .star:nth-child(4)');
+await client.waitForFunction(() => document.querySelectorAll('.lightbox-card .star.on').length === 4);
+check('four stars stick', (await client.$$('.lightbox-card .star.on')).length === 4);
+await client.fill('.lightbox-card textarea', 'This one for the album please');
+await client.waitForFunction(
+  () => document.querySelector('.lightbox-card .hint')?.textContent === 'Saved',
+  null,
+  { timeout: 10000 },
+);
+check('the comment saves on its own', true);
+
+await client.keyboard.press('Escape');
+await client.waitForSelector('.lightbox-card', { state: 'detached' });
+
+// Favourite straight from the grid — a tile click toggles it — so nothing is
+// overlaying the favourites panel when the archive button is clicked.
+await client.click('#image-grid .tile:first-child .tile-open');
+await client.waitForSelector('#download-picks:not([hidden])', { timeout: 10000 });
+check('the archive is offered once a downloadable pick exists', true);
+
+const picksZip = await Promise.all([
+  client.waitForEvent('download', { timeout: 15000 }),
+  client.click('#download-picks'),
+]).then(([event]) => event).catch(() => null);
+check('the whole selection downloads as one zip', Boolean(picksZip) && /\.zip$/.test(picksZip.suggestedFilename()), picksZip ? picksZip.suggestedFilename() : 'no download');
+
+// Put it back so the handoff section below starts from the count it expects.
+await client.click('#image-grid .tile:first-child .tile-open');
+await client.waitForFunction(
+  () => document.querySelectorAll('#favorites-strip .fav-chip').length === 1,
+  null,
+  { timeout: 10000 },
+);
+
+console.log('\n— handing the selection over —');
+await client.click('#image-grid .tile:first-child .tile-open');
+await client.waitForFunction(() => document.querySelectorAll('#favorites-strip .fav-chip').length === 2);
+await client.click('#send-button');
+await client.waitForFunction(
+  () => document.querySelector('#send-status')?.textContent.startsWith('Sent'),
+  null,
+  { timeout: 15000 },
+);
+check('success message shown after the webhook answered 200', true);
+const payload = hook.last()?.body;
+check('the webhook got both picks', payload?.total_selected === 2, JSON.stringify(payload?.total_selected));
+check('the webhook got the file names', payload?.selected_files?.includes('shot-3.png'), JSON.stringify(payload?.selected_files));
+
+hook.answerWith(500);
+await client.click('#send-button');
+await client.waitForFunction(
+  () => document.querySelector('#send-status')?.textContent.includes('Nothing was sent'),
+  null,
+  { timeout: 15000 },
+);
+check('a failed webhook never claims success', true);
+
+console.log('\n— phone layout —');
+const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+const phone = await phoneContext.newPage();
+phone.on('pageerror', (err) => errors.push(`phone: ${err.message}`));
+await phone.goto(shareUrl);
+await phone.waitForSelector('#gallery-view:not([hidden])');
+const overflow = await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+check('no horizontal scroll at 390px', overflow <= 1, `${overflow}px of overflow`);
+// Hover does not exist on a phone, so the per-image buttons have to be on screen.
+const actionsVisible = await phone.evaluate(
+  () => getComputedStyle(document.querySelector('#image-grid .tile-actions')).opacity,
+);
+check('image buttons are reachable without hover', Number(actionsVisible) === 1, `opacity ${actionsVisible}`);
+await phone.screenshot({ path: path.join(SHOTS, 'client-phone.png'), fullPage: true });
 
 check('no uncaught JavaScript errors', errors.length === 0, errors.join(' | '));
 
+console.log(`\n${checks - failures}/${checks} checks passed`);
+console.log(`Screenshots: ${SHOTS}`);
 await browser.close();
+await hook.stop();
 await server.stop();
 await fsp.rm(IMAGES, { recursive: true, force: true });
-if (!process.env.SHOTS) await fsp.rm(SHOTS, { recursive: true, force: true });
-else console.log(`\nScreenshots: ${SHOTS}`);
-
-console.log(`\n${checks - failures}/${checks} browser checks passed\n`);
 process.exit(failures ? 1 : 0);

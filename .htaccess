@@ -1,0 +1,16 @@
+# Only Apache reads this file; it is inert everywhere else (Node serves the app
+# itself, and Docker/Fly/Render never involve Apache).
+#
+# It exists for one case: a cPanel-style host where the app folder ends up
+# somewhere Apache serves directly. Apache would then hand out the photo
+# library straight off disk — https://yoursite.com/data/files/img_xxx.jpg —
+# without the request ever reaching the Node app, so the download PIN, the
+# locked tabs and the signed grants would all be bypassed at once.
+#
+# This blocks that. It is a backstop, not the fix: keep DATA_DIR outside the
+# web root, as docs/DEPLOY.md explains.
+
+RedirectMatch 404 ^/+data(/|$)
+
+# Dotfiles (.git, .env and friends) are never meant to be served either.
+RedirectMatch 404 /\.(?!well-known)
