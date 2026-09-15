@@ -450,7 +450,9 @@ function renderCover() {
   document.title = `${gallery.title} — your gallery`;
 
   const cover = $('#cover-image');
+  const frame = document.querySelector('.cover-media');
   cover.hidden = !gallery.coverImageUrl;
+  frame.hidden = !gallery.coverImageUrl;
   if (gallery.coverImageUrl) cover.src = gallery.coverImageUrl;
 
   const client = $('#cover-client');
