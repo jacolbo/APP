@@ -159,6 +159,64 @@ sudo journalctl -u poseboard -f      # live logs
 
 ---
 
+## Option E — cPanel shared hosting
+
+**First, check whether you can.** In cPanel, look under *Software* for **Setup
+Node.js App**. If it is there, this works. If you only see PHP tools, a file
+manager and databases, it does not — this app is a Node server, and no amount of
+uploading files will make a PHP-only host run it.
+
+If you have it:
+
+1. Upload the project to a folder **outside** `public_html` — say `~/poseboard`.
+   The File Manager's *Upload* plus *Extract* on a zip is enough; no git needed.
+2. **Setup Node.js App → Create Application**
+   - *Node.js version*: 22 if offered, otherwise the newest available
+   - *Application mode*: Production
+   - *Application root*: `poseboard`
+   - *Application URL*: the domain or subdomain clients will open
+   - *Application startup file*: `app.cjs`
+3. Add environment variables in the same screen:
+   - `ADMIN_PASSWORD` — your studio password. **Required**; the app refuses to
+     start in production without it.
+   - `DATA_DIR` — somewhere outside the web root, e.g. `/home/YOURUSER/poseboard-data`
+   - `NODE_ENV` — `production`
+4. Start the app. *Run NPM Install* is offered but does nothing useful here:
+   there are no dependencies to install.
+
+### Why `app.cjs` and not `server.js`
+
+cPanel starts an app by `require()`-ing one file. This project is written in ES
+modules, and `require()` of an ES module only works on Node 22.12 and newer —
+shared hosts are often several versions behind. `app.cjs` is a three-line
+shim that loads `server.js` the way every Node version understands. Running it
+any other way (`npm start`, Docker, Fly, Render) ignores that file entirely.
+
+### The one that will actually hurt you
+
+**Keep `DATA_DIR` outside `public_html`.** If the photo library sits anywhere
+Apache serves directly, then `https://yoursite.com/data/files/img_xxx.jpg`
+hands over the original file without the request ever reaching the app — no PIN,
+no locked tab, no signed grant. The whole download gate is bypassed by a URL
+anyone can guess the shape of. The repo ships an `.htaccess` that blocks `/data`
+as a backstop, but the fix is the path, not the backstop.
+
+### Other things to expect
+
+- **Storage quota.** Shared plans commonly cap the whole account well below what
+  a year of galleries needs. Check your quota before committing to it.
+- **Upload size.** Your host may cap request bodies below `MAX_UPLOAD_MB`, in
+  which case large uploads fail at the host rather than in the app.
+- **Idle shutdown.** Passenger stops an idle app and restarts it on the next
+  request, so the first visit after a quiet spell is slow. Harmless for galleries.
+
+**Untested claim, stated plainly:** the entry point is verified to load the way
+Passenger loads it, but nobody has run this on a real cPanel host. If you hit an
+error there, the message it prints is what identifies the problem.
+
+If you are choosing hosting fresh rather than using something you already pay
+for, Option A or B will give you fewer surprises than shared hosting.
+
 ## Once it's live
 
 1. Open your URL and sign in with `ADMIN_PASSWORD`.
