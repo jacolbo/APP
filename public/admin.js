@@ -88,7 +88,37 @@ function uploadBinary(url, blob, headers, onProgress) {
 
 // ---------- image helpers (all resizing happens in the browser) ----------
 
-async function renderScaled(file, maxEdge, quality) {
+/**
+ * Draws the studio's mark across the image. Done here rather than on the
+ * server because the server has no image library at all — the same canvas
+ * that already makes thumbnails can burn this in on the way past.
+ *
+ * It is painted on the copy that gets uploaded, so it is part of the pixels,
+ * not an overlay a client can remove with devtools.
+ */
+function drawWatermark(context, width, height, watermark) {
+  const size = Math.max(14, Math.round(Math.min(width, height) * 0.045));
+  context.save();
+  context.font = `600 ${size}px ui-sans-serif, system-ui, sans-serif`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.translate(width / 2, height / 2);
+  context.rotate(-Math.PI / 9);
+
+  const step = size * 7;
+  const reach = Math.hypot(width, height);
+  for (let y = -reach; y < reach; y += step) {
+    for (let x = -reach; x < reach; x += step * 1.6) {
+      context.fillStyle = 'rgba(0, 0, 0, 0.16)';
+      context.fillText(watermark, x + 1, y + 1);
+      context.fillStyle = 'rgba(255, 255, 255, 0.30)';
+      context.fillText(watermark, x, y);
+    }
+  }
+  context.restore();
+}
+
+async function renderScaled(file, maxEdge, quality, watermark = '') {
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
   const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
   const width = Math.max(1, Math.round(bitmap.width * scale));
@@ -99,6 +129,7 @@ async function renderScaled(file, maxEdge, quality) {
   const context = canvas.getContext('2d');
   context.imageSmoothingQuality = 'high';
   context.drawImage(bitmap, 0, 0, width, height);
+  if (watermark) drawWatermark(context, width, height, watermark);
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
   const source = { width: bitmap.width, height: bitmap.height };
   bitmap.close?.();
@@ -240,6 +271,21 @@ function renderCrumbs() {
       : h('button', { class: 'crumb', text: entry.title, onclick: () => go(entry.id) });
     return index === 0 ? [node] : [h('span', { class: 'crumb-sep', text: '/' }), node];
   }));
+}
+
+function renderStats() {
+  const { folder } = state;
+  const host = $('#folder-stats');
+  const people = new Set(state.selections.map((s) => s.clientSessionId)).size;
+  host.replaceChildren(...[
+    ['Views', folder.views || 0, 'page loads, not unique visitors'],
+    ['Downloads', folder.downloads || 0, 'files sent to clients'],
+    ['Picks', state.selections.filter((s) => s.selected !== false).length, ''],
+    ['People', people, ''],
+  ].map(([label, value, note]) => h('div', {}, [
+    h('div', { class: 'stat-value', text: String(value) }),
+    h('div', { class: 'stat-label', text: label, title: note }),
+  ])));
 }
 
 function renderShare() {
@@ -427,10 +473,12 @@ function renderFolder() {
   ].filter(Boolean).join(' · ');
 
   const badge = $('#folder-status');
-  badge.textContent = folder.status === 'published' ? 'Live' : 'Draft';
-  badge.className = `badge${folder.status === 'published' ? ' live' : ''}`;
+  const expired = folder.expired;
+  badge.textContent = expired ? 'Expired' : folder.status === 'published' ? 'Live' : 'Draft';
+  badge.className = `badge${expired ? ' warn' : folder.status === 'published' ? ' live' : ''}`;
 
   renderCrumbs();
+  renderStats();
   renderShare();
   renderChildren();
   renderTabs();
@@ -543,6 +591,33 @@ function openSettings() {
     placeholder: 'No limit',
   });
   const webhook = h('input', { type: 'text', value: folder.webhookUrl || '', placeholder: 'https://studio.example.com/hooks/selection' });
+  const brandColor = h('input', { type: 'color', value: folder.brandColor || '#9a6640', style: 'height:42px; padding:4px' });
+  const watermark = h('input', { type: 'text', value: folder.watermarkText || '', placeholder: 'Your Studio Name' });
+  const expiresAt = h('input', {
+    type: 'date',
+    value: folder.expiresAt ? folder.expiresAt.slice(0, 10) : '',
+  });
+  const logoInput = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/svg+xml', hidden: true });
+  const logoPreview = h('img', {
+    src: folder.logoUrl || '',
+    alt: '',
+    hidden: !folder.logoUrl,
+    style: 'height:34px; width:auto; max-width:150px; object-fit:contain',
+  });
+
+  logoInput.addEventListener('change', async () => {
+    const file = logoInput.files[0];
+    if (!file) return;
+    try {
+      await uploadBinary(`/api/folders/${folder.id}/logo`, file, { 'content-type': file.type });
+      toast('Logo uploaded');
+      close();
+      await refresh();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
   let close;
 
   const save = async () => {
@@ -555,6 +630,10 @@ function openSettings() {
     // Left blank means "leave it alone"; the Clear button is how you remove it.
     if (pin.value.trim()) body.downloadPin = pin.value.trim();
     body.downloadPinMaxUses = pinMax.value.trim() ? Number(pinMax.value.trim()) : null;
+    body.brandColor = brandColor.value;
+    body.watermarkText = watermark.value.trim();
+    // A date alone means end of that day, not midnight at its start.
+    body.expiresAt = expiresAt.value ? `${expiresAt.value}T23:59:59` : '';
     try {
       await api(`/api/folders/${folder.id}`, { method: 'PATCH', body });
       close();
@@ -590,6 +669,32 @@ function openSettings() {
     ]),
     h('label', { class: 'field' }, [h('span', { text: 'Send selections to (webhook URL)' }), webhook]),
     h('p', { class: 'hint', text: 'Where "Send to photographer" POSTs the shortlist. Blank uses the WEBHOOK_URL the server was started with, if any.' }),
+
+    h('h2', { style: 'margin-top:26px', text: 'How it looks' }),
+    h('label', { class: 'field' }, [h('span', { text: 'Accent colour' }), brandColor]),
+    h('div', { class: 'field' }, [
+      h('span', { text: 'Your logo' }),
+      h('div', { class: 'row' }, [
+        logoPreview,
+        h('button', { type: 'button', class: 'btn btn-sm', text: folder.logoUrl ? 'Replace' : 'Upload logo', onclick: () => logoInput.click() }),
+        folder.logoUrl && h('button', {
+          type: 'button', class: 'btn btn-sm btn-danger', text: 'Remove',
+          onclick: async () => {
+            close();
+            try {
+              await api(`/api/folders/${folder.id}/logo`, { method: 'DELETE' });
+              await refresh();
+              toast('Logo removed');
+            } catch (err) { toast(err.message, true); }
+          },
+        }),
+        logoInput,
+      ]),
+    ]),
+    h('label', { class: 'field' }, [h('span', { text: 'Watermark on preview tabs' }), watermark]),
+    h('p', { class: 'hint', text: 'Burned into images as they upload, on tabs clients cannot download. Deliverable tabs stay clean. Only affects new uploads.' }),
+    h('label', { class: 'field' }, [h('span', { text: 'Gallery closes on' }), expiresAt]),
+    h('p', { class: 'hint', text: 'After this date the link stops working and your software is told. Leave blank to keep it open forever.' }),
     h('div', { class: 'modal-actions' }, [
       folder.hasPin && h('button', {
         class: 'btn btn-sm',
@@ -695,9 +800,22 @@ async function uploadOne(file, onProgress) {
   let type = file.type;
   let dimensions = null;
 
+  // Deliverables stay clean: the mark goes on tabs the client browses, never
+  // on the ones they pay to download.
+  const tab = activeTab();
+  const watermark = (!tab || tab.downloadable) ? '' : (state.folder.watermarkText || '');
+
+  if (watermark) {
+    const marked = await renderScaled(file, DISPLAY_MAX_EDGE, 0.88, watermark).catch(() => null);
+    if (!marked?.blob) throw new Error('could not be watermarked in the browser');
+    body = marked.blob;
+    type = 'image/jpeg';
+    dimensions = { width: marked.width, height: marked.height };
+  }
+
   // The studio resizes before uploading, but anything still over the limit is
   // scaled in the browser so an upload straight off a phone does not bounce.
-  if (file.size > state.maxUploadBytes) {
+  if (!watermark && file.size > state.maxUploadBytes) {
     const scaled = await renderScaled(file, DISPLAY_MAX_EDGE, 0.86).catch(() => null);
     if (!scaled?.blob) throw new Error('too large and could not be resized in the browser');
     if (scaled.blob.size > state.maxUploadBytes) throw new Error('still too large after resizing');
@@ -810,6 +928,10 @@ $('#folder-settings').addEventListener('click', openSettings);
 $('#new-tab').addEventListener('click', createTab);
 $('#save-tab').addEventListener('click', saveTab);
 $('#delete-tab').addEventListener('click', deleteTab);
+$('#download-tab').addEventListener('click', () => {
+  const tab = activeTab();
+  if (tab) location.href = `/api/tabs/${tab.id}/images.zip`;
+});
 
 $('#folder-search').addEventListener('input', (event) => {
   state.search = event.target.value;

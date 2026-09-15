@@ -37,6 +37,13 @@ whole wedding or just the ceremony.
 
 ## Quick start
 
+**Easiest, no terminal:** double-click `start.command` (macOS/Linux) or
+`start.bat` (Windows). It checks for Node, makes you a studio password the
+first time, starts the app and opens it in your browser. The password is saved
+in `data/studio-password.txt`.
+
+**From a terminal:**
+
 ```bash
 git clone <this repo>
 cd APP
@@ -127,6 +134,26 @@ that terminates TLS, so the links you send are `https://`. It sets the `Secure`
 flag on the login cookie automatically when it sees `X-Forwarded-Proto: https`,
 so pass that header through.
 
+## Beyond the basics
+
+- **Download everything at once.** A client's whole selection comes down as one
+  zip, and the studio can pull a whole tab the same way. The archive is written
+  by hand with Node's `zlib` — no dependency — and is PIN-gated exactly like a
+  single download.
+- **Your branding.** Set an accent colour and upload your logo per folder, and
+  the client's gallery uses them. A sub-folder inherits from the folder above.
+- **Watermarks.** Set a watermark on a folder and it is burned into images as
+  they upload — by the same browser canvas that already makes thumbnails, since
+  the server has no image library. It goes on tabs clients cannot download and
+  never on the deliverables. Affects new uploads only.
+- **Stars and notes.** Clients can rate an image and leave a note on it without
+  favouriting it, and both survive un-favouriting. The studio sees them, and the
+  handoff carries them.
+- **Expiry.** Give a gallery a closing date and the link stops working after it,
+  with `gallery.expired` sent to your software. Clearing the date reopens it.
+- **A few numbers.** Views, downloads, picks and how many people picked. Views
+  counts page loads, not unique visitors — the studio screen says so.
+
 ## Sending selections to your software
 
 When a client presses **Send to photographer**, the server POSTs JSON to the
@@ -147,6 +174,12 @@ folder's webhook URL (or `WEBHOOK_URL`):
   "sentAt": "2026-01-01T12:00:00.000Z"
 }
 ```
+
+Other events fire the same way: `gallery.created`, `gallery.published`,
+`gallery.expired`, `comment.posted`, and `file.uploaded`. All but `file.uploaded`
+are on by default — a studio dropping 500 images should not fire 500 requests at
+their own software unless they asked for it. Per-folder selection of events is
+in the API (`webhookEvents`).
 
 **Only HTTP 200 counts as delivered.** A 201, a redirect, a timeout (10s) or an
 unreachable host all show the client an error saying nothing was sent — they are
@@ -236,8 +269,8 @@ multi-tenant service.
 ## Tests
 
 ```bash
-npm test          # 103 API checks + 17 migration checks — starts its own server
-npm run test:ui   # 41 browser checks — needs Playwright
+npm test          # 137 API checks + 17 migration checks — starts its own server
+npm run test:ui   # 48 browser checks — needs Playwright
 ```
 
 `npm test` covers auth, the folder tree (including the depth cap and the
@@ -278,6 +311,7 @@ lib/auth.js             signed session cookies, login throttle
 lib/pin.js              scrypt hashing and constant-time checking of PINs
 lib/grant.js            short-lived signed download grants
 lib/webhook.js          the handoff POST
+lib/zip.js              a small ZIP writer, so bulk download needs no dependency
 lib/util.js             request/response helpers, input trimming
 public/index.html+js    the studio
 public/gallery.html+js  the client gallery

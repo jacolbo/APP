@@ -117,6 +117,8 @@ async function main() {
         }
         const image = /^\/(i|t|d)\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
         if (image) return await api.serveImage(req, res, image[1], image[2]);
+        const logo = /^\/logo\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
+        if (logo) return await api.serveLogo(req, res, logo[1]);
         return serveStatic(req, res, url.pathname);
       }
 
@@ -143,7 +145,15 @@ async function main() {
     console.log('');
   });
 
+  // An expired gallery closes itself the moment anyone tries the link, but the
+  // studio's software should hear about it whether or not someone does — so
+  // sweep on start and hourly after that.
+  api.sweepExpired();
+  const expirySweep = setInterval(() => api.sweepExpired(), 60 * 60 * 1000);
+  expirySweep.unref();
+
   const shutdown = () => {
+    clearInterval(expirySweep);
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000).unref();
   };

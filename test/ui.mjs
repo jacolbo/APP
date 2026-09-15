@@ -92,6 +92,8 @@ await page.click('#folder-settings');
 await page.waitForSelector('.modal-card');
 await page.fill('.modal-card input[inputmode=numeric]', '4821');
 await page.fill('.modal-card input[placeholder^="https://studio"]', hook.url);
+await page.fill('.modal-card input[placeholder="Your Studio Name"]', 'Ana & Tom Studio');
+await page.$eval('.modal-card input[type=color]', (el) => { el.value = '#2f6f4f'; });
 await page.click('.modal-card .btn-primary');
 await page.waitForSelector('.modal-card', { state: 'detached' });
 await page.waitForTimeout(300);
@@ -177,6 +179,8 @@ await page.click('#root-cards .card:first-child');
 await page.waitForSelector('#folder-view:not([hidden])');
 const whoPicked = await page.textContent('#selections-summary');
 check('the studio shows the name and email, not a session id', whoPicked.includes('Ana') && whoPicked.includes('ana@example.com'), whoPicked.slice(0, 120));
+const statsText = await page.textContent('#folder-stats');
+check('the studio sees views and downloads', /Views/i.test(statsText) && /Downloads/i.test(statsText), statsText.slice(0, 80));
 
 console.log('\n— the PIN gate —');
 await client.click('#tabbar .tab:nth-child(2)');
@@ -200,6 +204,47 @@ const download = await Promise.all([
 ]).then(([event]) => event).catch(() => null);
 check('the download button actually downloads', Boolean(download), 'no download event fired');
 if (download) check('the file keeps its name', download.suggestedFilename() === 'shot-3.png', download.suggestedFilename());
+
+console.log('\n— branding, stars and a comment —');
+const accent = await client.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
+check('the studio accent colour reaches the client page', accent === '#2f6f4f', accent);
+
+await client.click('#image-grid .tile:first-child .tile-actions button:nth-child(2)');
+await client.waitForSelector('.lightbox-card .stars');
+check('a rating control is offered', (await client.$$('.lightbox-card .star')).length === 5);
+await client.click('.lightbox-card .star:nth-child(4)');
+await client.waitForFunction(() => document.querySelectorAll('.lightbox-card .star.on').length === 4);
+check('four stars stick', (await client.$$('.lightbox-card .star.on')).length === 4);
+await client.fill('.lightbox-card textarea', 'This one for the album please');
+await client.waitForFunction(
+  () => document.querySelector('.lightbox-card .hint')?.textContent === 'Saved',
+  null,
+  { timeout: 10000 },
+);
+check('the comment saves on its own', true);
+
+await client.keyboard.press('Escape');
+await client.waitForSelector('.lightbox-card', { state: 'detached' });
+
+// Favourite straight from the grid — a tile click toggles it — so nothing is
+// overlaying the favourites panel when the archive button is clicked.
+await client.click('#image-grid .tile:first-child .tile-open');
+await client.waitForSelector('#download-picks:not([hidden])', { timeout: 10000 });
+check('the archive is offered once a downloadable pick exists', true);
+
+const picksZip = await Promise.all([
+  client.waitForEvent('download', { timeout: 15000 }),
+  client.click('#download-picks'),
+]).then(([event]) => event).catch(() => null);
+check('the whole selection downloads as one zip', Boolean(picksZip) && /\.zip$/.test(picksZip.suggestedFilename()), picksZip ? picksZip.suggestedFilename() : 'no download');
+
+// Put it back so the handoff section below starts from the count it expects.
+await client.click('#image-grid .tile:first-child .tile-open');
+await client.waitForFunction(
+  () => document.querySelectorAll('#favorites-strip .fav-chip').length === 1,
+  null,
+  { timeout: 10000 },
+);
 
 console.log('\n— handing the selection over —');
 await client.click('#image-grid .tile:first-child .tile-open');

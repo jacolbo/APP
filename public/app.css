@@ -21,6 +21,7 @@
   --surface-2: #f6f3f0;   /* only where a control should recede */
   --line: #e6e1db;
   --line-soft: #f1ede8;
+  --line-firm: #d3cabb;
   --text: #181614;
   --text-soft: #4a443d;
   --muted: #8b847b;
@@ -648,6 +649,60 @@ textarea { resize: vertical; min-height: 88px; }
 }
 
 .cover-copy .btn { margin-top: 6px; }
+
+/* ---------- branding ---------- */
+
+.brand img {
+  height: 26px;
+  width: auto;
+  max-width: 150px;
+  object-fit: contain;
+}
+
+.cover-logo {
+  height: 48px;
+  width: auto;
+  max-width: 220px;
+  object-fit: contain;
+  margin-bottom: 4px;
+}
+
+/* ---------- rating ---------- */
+
+.stars { display: flex; gap: 2px; }
+
+.star {
+  appearance: none;
+  border: 0;
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+  padding: 2px 3px;
+  cursor: pointer;
+  color: var(--line-firm, #d3cabb);
+  transition: color 0.12s ease, transform 0.12s ease;
+}
+
+.star.on { color: var(--accent); }
+.star:hover { transform: translateY(-1px); }
+.star:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
+
+/* ---------- studio: a small run of numbers ---------- */
+
+.stat-row { display: flex; gap: 28px; flex-wrap: wrap; }
+.stat-value {
+  font-family: var(--serif);
+  font-size: 26px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.stat-label {
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 
 /* ---------- client gallery: favourites ---------- */
 

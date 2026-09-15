@@ -13,6 +13,7 @@ const state = {
   folders: [],
   tabs: [],
   favorites: [],
+  feedback: [],   // stars and notes, including on images not favourited
   activeTabId: null,
   sessionId: '',
   clientName: '',
@@ -111,6 +112,7 @@ async function load(folderId) {
   state.folders = data.folders;
   state.tabs = data.tabs;
   state.favorites = data.favorites;
+  state.feedback = data.feedback || [];
 
   // Keep the open tab across a reload when it is still there; otherwise fall
   // back to the first tab that actually has something in it.
@@ -129,14 +131,26 @@ const isFavorite = (imageId) => state.favorites.some((fav) => fav.id === imageId
  * never loses a pick. The tile flips immediately and rolls back if the save
  * fails, and a second click while one is in flight is ignored.
  */
-async function toggleFavorite(image, force) {
+async function toggleFavorite(image, force, tab) {
   if (state.pending.has(image.id)) return;
   const next = force === undefined ? !isFavorite(image.id) : force;
   state.pending.add(image.id);
 
   const previous = state.favorites;
+  // The optimistic entry has to carry everything the favourites strip reads —
+  // notably `downloadable`, or the archive button stays hidden until a reload.
+  const existing = state.feedback.find((row) => row.id === image.id) || {};
   state.favorites = next
-    ? [...state.favorites, { ...image, locked: false, note: '', createdAt: new Date().toISOString() }]
+    ? [...state.favorites, {
+      ...image,
+      locked: false,
+      note: existing.note || '',
+      rating: existing.rating || 0,
+      downloadable: Boolean(tab ? tab.downloadable : image.downloadable),
+      tabTitle: tab ? tab.title : image.tabTitle || '',
+      folderPath: image.folderPath || state.folder.title,
+      createdAt: new Date().toISOString(),
+    }]
     : state.favorites.filter((fav) => fav.id !== image.id);
   render();
 
@@ -338,6 +352,26 @@ async function download(image) {
   location.href = `/d/${encodeURIComponent(image.id)}`;
 }
 
+/** One archive of every pick the client is allowed to download. */
+async function downloadPicks() {
+  if (!state.gallery.unlocked) {
+    if (!state.gallery.hasPin) {
+      toast('Your photographer has not set a download PIN yet', true);
+      return;
+    }
+    if (!await askForPin('Your photographer gave you a PIN for downloading.')) return;
+    await load(state.folder.id);
+  }
+  // A pick made a moment ago may still be in flight. Navigating before it
+  // lands asks the server for an archive it does not know about yet, and the
+  // client gets an error page instead of their photos.
+  for (let waited = 0; state.pending.size && waited < 5000; waited += 100) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const params = new URLSearchParams({ clientSessionId: state.sessionId });
+  location.href = `/api/g/${encodeURIComponent(link)}/selection.zip?${params}`;
+}
+
 async function unlockTab() {
   if (!state.gallery.hasPin) {
     toast('Your photographer has not set a PIN for this gallery yet', true);
@@ -384,6 +418,64 @@ function openLightbox(images, startIndex) {
   const figure = h('img', { alt: '' });
   const caption = h('p', { class: 'muted small', style: 'margin:0' });
   const heart = h('button', { class: 'btn btn-sm' });
+  const stars = h('div', { class: 'stars', role: 'group', 'aria-label': 'Rating' });
+  const comment = h('textarea', { placeholder: 'A note for your photographer…', rows: '3' });
+  const commentStatus = h('p', { class: 'hint', style: 'margin:0', hidden: true });
+
+  const feedbackFor = (id) => state.feedback.find((row) => row.id === id) || {};
+
+  /** Saved on change, like the hearts — nothing here needs a Save button. */
+  async function saveFeedback(image, patch) {
+    try {
+      const result = await api('/select', {
+        method: 'POST',
+        body: {
+          imageId: image.id,
+          clientSessionId: state.sessionId,
+          clientName: state.clientName,
+          clientEmail: state.clientEmail,
+          ...patch,
+        },
+      });
+      const row = state.feedback.find((entry) => entry.id === image.id);
+      if (row) Object.assign(row, { note: result.note, rating: result.rating, selected: result.selected });
+      else state.feedback.push({ id: image.id, note: result.note, rating: result.rating, selected: result.selected });
+      const fav = state.favorites.find((entry) => entry.id === image.id);
+      if (fav) Object.assign(fav, { note: result.note, rating: result.rating });
+      render();
+      return result;
+    } catch (err) {
+      toast(err.message, true);
+      return null;
+    }
+  }
+
+  function paintStars() {
+    const current = feedbackFor(images[index].id).rating || 0;
+    stars.replaceChildren(...[1, 2, 3, 4, 5].map((value) => h('button', {
+      class: `star${value <= current ? ' on' : ''}`,
+      type: 'button',
+      'aria-label': `${value} star${value === 1 ? '' : 's'}`,
+      'aria-pressed': value <= current ? 'true' : 'false',
+      text: value <= current ? '★' : '☆',
+      onclick: async () => {
+        // Clicking the current rating again clears it.
+        await saveFeedback(images[index], { rating: value === current ? 0 : value });
+        paintStars();
+      },
+    })));
+  }
+
+  let commentTimer;
+  comment.addEventListener('input', () => {
+    clearTimeout(commentTimer);
+    commentStatus.hidden = false;
+    commentStatus.textContent = 'Saving…';
+    commentTimer = setTimeout(async () => {
+      const saved = await saveFeedback(images[index], { note: comment.value });
+      commentStatus.textContent = saved ? 'Saved' : 'Not saved';
+    }, 700);
+  });
 
   const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
   const downloadButton = activeTab?.downloadable
@@ -397,6 +489,10 @@ function openLightbox(images, startIndex) {
     caption.textContent = `${index + 1} of ${images.length}${image.title ? ` · ${image.title}` : ''}`;
     heart.textContent = isFavorite(image.id) ? '♥ Favourited' : '♡ Add to favourites';
     heart.className = `btn btn-sm${isFavorite(image.id) ? ' btn-primary' : ''}`;
+    clearTimeout(commentTimer);
+    commentStatus.hidden = true;
+    comment.value = feedbackFor(image.id).note || '';
+    paintStars();
   }
 
   const step = (delta) => {
@@ -405,7 +501,7 @@ function openLightbox(images, startIndex) {
   };
 
   heart.addEventListener('click', async () => {
-    await toggleFavorite(images[index]);
+    await toggleFavorite(images[index], undefined, activeTab);
     paint();
   });
 
@@ -417,6 +513,9 @@ function openLightbox(images, startIndex) {
     ]),
     h('div', { class: 'lightbox-side' }, [
       h('div', { class: 'row' }, [heart, downloadButton]),
+      stars,
+      comment,
+      commentStatus,
       caption,
     ]),
     h('button', { class: 'icon-btn close-x', text: '✕', 'aria-label': 'Close', onclick: () => close() }),
@@ -443,8 +542,35 @@ function openLightbox(images, startIndex) {
 
 // ---------- rendering ----------
 
+/** The studio's colour and mark, applied to the page the client actually sees. */
+function applyBranding(gallery) {
+  if (gallery.brandColor) {
+    document.documentElement.style.setProperty('--accent', gallery.brandColor);
+    document.documentElement.style.setProperty('--accent-soft', `${gallery.brandColor}1f`);
+  }
+  for (const [id, hideDot] of [['#brand-logo', true], ['#cover-logo', false]]) {
+    const img = $(id);
+    img.hidden = !gallery.logoUrl;
+    if (gallery.logoUrl) img.src = gallery.logoUrl;
+    if (hideDot) $('#brand-dot').hidden = Boolean(gallery.logoUrl);
+  }
+}
+
+function renderExpiry(gallery) {
+  const note = $('#expiry-note');
+  if (!gallery.expiresAt) { note.hidden = true; return; }
+  const when = new Date(gallery.expiresAt);
+  const days = Math.ceil((when - Date.now()) / 86400000);
+  note.hidden = false;
+  note.textContent = days <= 0
+    ? 'This gallery closes today — download anything you want to keep.'
+    : `This gallery stays open until ${when.toLocaleDateString()} (${days} day${days === 1 ? '' : 's'}).`;
+}
+
 function renderCover() {
   const { gallery } = state;
+  applyBranding(gallery);
+  renderExpiry(gallery);
   $('#brand-title').textContent = gallery.title;
   $('#cover-title').textContent = gallery.title;
   document.title = `${gallery.title} — your gallery`;
@@ -505,6 +631,10 @@ function renderFavorites() {
   $('#favorites-empty').hidden = count > 0;
 
   $('#restore-button').hidden = count > 0;
+
+  // Only offered when there is actually something downloadable in the picks.
+  const downloadable = state.favorites.some((fav) => fav.downloadable && !fav.locked);
+  $('#download-picks').hidden = !downloadable;
 
   const send = $('#send-button');
   // Hidden entirely when the studio has not set a handoff address, rather
@@ -573,7 +703,7 @@ function imageTile(image, tab, images) {
       class: 'tile-open',
       'aria-pressed': favorited ? 'true' : 'false',
       'aria-label': `${favorited ? 'Remove' : 'Add'} ${image.title || image.fileName || 'photo'} ${favorited ? 'from' : 'to'} favourites`,
-      onclick: () => toggleFavorite(image),
+      onclick: () => toggleFavorite(image, undefined, tab),
     }, [
       h('img', { src: image.thumbUrl, alt: image.title || '', loading: 'lazy' }),
     ]),
@@ -583,7 +713,7 @@ function imageTile(image, tab, images) {
         text: favorited ? '♥' : '♡',
         'aria-hidden': 'true',
         tabindex: '-1',
-        onclick: () => toggleFavorite(image),
+        onclick: () => toggleFavorite(image, undefined, tab),
       }),
       h('button', {
         class: 'icon-btn',
@@ -673,6 +803,7 @@ async function start() {
   });
   $('#send-button').addEventListener('click', sendToPhotographer);
   $('#restore-button').addEventListener('click', restorePicks);
+  $('#download-picks').addEventListener('click', downloadPicks);
   $('#lock-button').addEventListener('click', async () => {
     await api('/lock', { method: 'POST' });
     await load(state.folder.id);

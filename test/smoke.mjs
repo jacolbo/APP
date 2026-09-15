@@ -219,6 +219,23 @@ check('preview tab is still not downloadable', (await call(`/d/${preview1.id}`, 
 check('open downloadable tab downloads after the PIN', (await call(`/d/${proof.id}`, { as: 'client' })).status === 200);
 await call(`/api/g/${link}/select`, { method: 'POST', as: 'client', body: { imageId: deliverable.id, clientSessionId: 'sess-a', selected: true } });
 
+console.log('\n— zipping a selection —');
+const zipped = await call(`/api/g/${link}/selection.zip?clientSessionId=sess-a`, { as: 'client' });
+check('archive served while unlocked', zipped.status === 200, String(zipped.status));
+check('served as a zip attachment',
+  (zipped.res.headers.get('content-type') || '').includes('application/zip')
+  && /attachment/.test(zipped.res.headers.get('content-disposition') || ''));
+const zipBytes = Buffer.from(await zipped.res.arrayBuffer());
+check('starts with the local file header magic', zipBytes.subarray(0, 4).toString('hex') === '504b0304', zipBytes.subarray(0, 4).toString('hex'));
+check('ends with an end-of-central-directory record', zipBytes.subarray(-22, -18).toString('hex') === '504b0506', zipBytes.subarray(-22, -18).toString('hex'));
+// One favourite sits in a downloadable tab; the other does not, and must not
+// be smuggled into the archive.
+check('only the downloadable pick is inside', zipBytes.includes(Buffer.from('FINAL-0041.png')) && !zipBytes.includes(Buffer.from('preview-01.png')));
+check('an empty tab has no archive', (await call(`/api/tabs/${finalTab.id}/images.zip`)).status === 200);
+const emptyTab = (await call(`/api/folders/${gallery.id}/tabs`, { method: 'POST', body: { title: 'Nothing here' } })).data.tab;
+check('zipping an empty tab is refused', (await call(`/api/tabs/${emptyTab.id}/images.zip`)).status === 404);
+check('a signed-out visitor cannot zip a tab', (await call(`/api/tabs/${finalTab.id}/images.zip`, { as: 'client' })).status === 401);
+
 console.log('\n— handoff webhook —');
 const noHook = await call(`/api/g/${link}/handoff`, { method: 'POST', as: 'client', body: { clientSessionId: 'sess-a' } });
 check('handoff refused with nowhere to send', noHook.status === 501, String(noHook.status));
@@ -245,6 +262,75 @@ hook.answerWith(200);
 const emptyHandoff = await call(`/api/g/${link}/handoff`, { method: 'POST', as: 'client', body: { clientSessionId: 'sess-empty' } });
 check('handoff with nothing picked is refused', emptyHandoff.status === 400);
 
+console.log('\n— branding —');
+check('a bad colour is refused', (await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { brandColor: 'reddish' } })).status === 400);
+const branded = await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { brandColor: '#2f6f4f', watermarkText: 'Ana & Tom Studio' } });
+check('accent colour saved', branded.data.folder.brandColor === '#2f6f4f');
+check('watermark text saved', branded.data.folder.watermarkText === 'Ana & Tom Studio');
+const PNG_LOGO = PNG;
+const logoUp = await call(`/api/folders/${gallery.id}/logo`, { method: 'POST', raw: PNG_LOGO, headers: { 'content-type': 'image/png' } });
+check('logo uploaded', logoUp.status === 200 && logoUp.data.folder.logoUrl === `/logo/${gallery.id}`);
+check('logo is served', (await call(`/logo/${gallery.id}`, { as: 'client' })).status === 200);
+check('a text file is not accepted as a logo', (await call(`/api/folders/${gallery.id}/logo`, { method: 'POST', raw: 'x', headers: { 'content-type': 'text/plain' } })).status === 415);
+const brandedView = await call(`/api/g/${link}?clientSessionId=sess-a`, { as: 'client' });
+check('the client gallery carries the branding', brandedView.data.gallery.brandColor === '#2f6f4f' && brandedView.data.gallery.logoUrl === `/logo/${gallery.id}`);
+
+console.log('\n— ratings and comments —');
+// Rating a photo you have not hearted must not heart it for you.
+const untouched = (await call(`/api/g/${link}/select`, { method: 'POST', as: 'client', body: { imageId: preview2.id, clientSessionId: 'sess-rate', rating: 3 } })).data;
+check('a rating alone does not favourite the photo', untouched.selected === false && untouched.rating === 3, JSON.stringify(untouched));
+check('but it is remembered', (await call(`/api/g/${link}?clientSessionId=sess-rate`, { as: 'client' })).data.feedback.some((f) => f.id === preview2.id && f.rating === 3));
+const rated = await call(`/api/g/${link}/select`, { method: 'POST', as: 'client', body: { imageId: preview1.id, clientSessionId: 'sess-a', rating: 4, note: 'love the light here' } });
+check('rating and note saved together', rated.data.rating === 4 && rated.data.note === 'love the light here');
+check('a rating is clamped to 0–5', (await call(`/api/g/${link}/select`, { method: 'POST', as: 'client', body: { imageId: preview1.id, clientSessionId: 'sess-a', rating: 99 } })).data.rating === 5);
+const withNote = await call(`/api/g/${link}?clientSessionId=sess-a`, { as: 'client' });
+check('the favourite carries its note and stars back', withNote.data.favorites.some((f) => f.note === 'love the light here' && f.rating === 5));
+const unhearted = await call(`/api/g/${link}/select`, { method: 'POST', as: 'client', body: { imageId: preview1.id, clientSessionId: 'sess-a', selected: false } });
+check('un-hearting drops it from the favourites', unhearted.data.selected === false);
+const studioSees = await call(`/api/folders/${gallery.id}`);
+check('but the studio still has the comment', studioSees.data.selections.some((s) => s.imageId === preview1.id && s.note === 'love the light here'));
+await call(`/api/g/${link}/select`, { method: 'POST', as: 'client', body: { imageId: preview1.id, clientSessionId: 'sess-a', selected: true } });
+
+console.log('\n— more webhook events —');
+await new Promise((r) => setTimeout(r, 300));
+const before = hook.received.length;
+const childFolder = (await call('/api/folders', { method: 'POST', body: { parentId: gallery.id, title: 'Portraits' } })).data.folder;
+await new Promise((r) => setTimeout(r, 400));
+check('gallery.created fires', hook.received.slice(before).some((r) => r.body?.event === 'gallery.created'), JSON.stringify(hook.received.slice(before).map((r) => r.body?.event)));
+const beforePublish = hook.received.length;
+await call(`/api/folders/${childFolder.id}`, { method: 'PATCH', body: { status: 'published' } });
+await new Promise((r) => setTimeout(r, 400));
+check('gallery.published fires', hook.received.slice(beforePublish).some((r) => r.body?.event === 'gallery.published'));
+const beforeComment = hook.received.length;
+await call(`/api/g/${link}/select`, { method: 'POST', as: 'client', body: { imageId: preview1.id, clientSessionId: 'sess-a', note: 'second thought' } });
+await new Promise((r) => setTimeout(r, 400));
+check('comment.posted fires', hook.received.slice(beforeComment).some((r) => r.body?.event === 'comment.posted'));
+const beforeUpload = hook.received.length;
+await upload(previewTab.id, 'quiet.png');
+await new Promise((r) => setTimeout(r, 400));
+check('file.uploaded stays off unless asked for', !hook.received.slice(beforeUpload).some((r) => r.body?.event === 'file.uploaded'));
+await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { webhookEvents: ['file.uploaded'] } });
+const beforeOptIn = hook.received.length;
+await upload(previewTab.id, 'noisy.png');
+await new Promise((r) => setTimeout(r, 400));
+check('file.uploaded fires once opted in', hook.received.slice(beforeOptIn).some((r) => r.body?.event === 'file.uploaded'));
+await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { webhookEvents: null } });
+
+console.log('\n— analytics —');
+const stats = (await call(`/api/folders/${gallery.id}`)).data.folder;
+check('views were counted', stats.views > 0, String(stats.views));
+check('downloads were counted', stats.downloads > 0, String(stats.downloads));
+
+console.log('\n— expiry —');
+check('a nonsense date is refused', (await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { expiresAt: 'whenever' } })).status === 400);
+await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { expiresAt: '2020-01-01T00:00:00Z' } });
+const gone = await call(`/api/g/${link}?clientSessionId=sess-a`, { as: 'client' });
+check('an expired gallery closes its link', gone.status === 410, String(gone.status));
+await new Promise((r) => setTimeout(r, 400));
+check('gallery.expired fires', hook.received.some((r) => r.body?.event === 'gallery.expired'));
+await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { expiresAt: '' } });
+check('clearing the date reopens it', (await call(`/api/g/${link}?clientSessionId=sess-a`, { as: 'client' })).status === 200);
+
 console.log('\n— locking again —');
 await call(`/api/g/${link}/lock`, { method: 'POST', as: 'client' });
 const relocked = await call(`/api/g/${link}?clientSessionId=sess-a`, { as: 'client' });
@@ -252,6 +338,7 @@ check('tab locks again after signing out of the PIN', relocked.data.tabs.find((t
 check('a favourite in a locked tab is kept but URL-free', relocked.data.favorites.some((f) => f.locked === true && !f.url));
 check('locked image hidden again', (await call(`/d/${deliverable.id}`, { as: 'client' })).status === 404);
 check('visible download asks for the PIN again', (await call(`/d/${proof.id}`, { as: 'client' })).status === 401);
+check('the archive closes with the lock', (await call(`/api/g/${link}/selection.zip?clientSessionId=sess-a`, { as: 'client' })).status === 401);
 
 console.log('\n— PIN use limit —');
 check('a silly limit is refused', (await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { downloadPinMaxUses: -3 } })).status === 400);

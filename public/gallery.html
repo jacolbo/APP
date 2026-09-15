@@ -21,7 +21,7 @@
   <div id="gallery-view" hidden>
     <header class="topbar">
       <div class="wrap topbar-inner">
-        <span class="brand"><span class="dot"></span> <span id="brand-title">Gallery</span></span>
+        <span class="brand"><img id="brand-logo" alt="" hidden><span class="dot" id="brand-dot"></span> <span id="brand-title">Gallery</span></span>
         <span class="spacer"></span>
         <button class="btn btn-sm btn-ghost" id="jump-favorites">♥ <span id="top-count">0</span></button>
         <button class="btn btn-sm btn-ghost" id="lock-button" hidden title="Lock the protected tabs again">Lock</button>
@@ -32,6 +32,7 @@
     <section class="cover" id="cover">
       <div class="cover-media"><img id="cover-image" alt="" hidden></div>
       <div class="cover-copy">
+        <img class="cover-logo" id="cover-logo" alt="" hidden>
         <p class="cover-eyebrow" id="cover-client" hidden></p>
         <h1 id="cover-title"></h1>
         <p class="cover-note" id="cover-description" hidden></p>
@@ -46,8 +47,10 @@
         <div class="row">
           <h2 style="margin:0">Your favourites <span class="muted" id="favorites-count"></span></h2>
           <span class="spacer"></span>
+          <button class="btn btn-sm" id="download-picks" hidden>Download my picks</button>
           <button class="btn btn-sm btn-primary" id="send-button" hidden>Send to photographer</button>
         </div>
+        <p class="hint" id="expiry-note" hidden></p>
         <p class="hint" id="favorites-empty">Nothing picked yet — tap any photo below and it lands here.</p>
         <button class="btn btn-sm btn-ghost" id="restore-button" hidden style="margin-top:8px">Picked on another device?</button>
         <div class="fav-strip" id="favorites-strip"></div>
