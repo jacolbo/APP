@@ -62,6 +62,20 @@ async function loadSessionSecret(dataDir) {
   return secret;
 }
 
+/**
+ * `no-cache` does not mean "do not cache" — it means "revalidate before
+ * reusing". Paired with an ETag, an unchanged file costs a 304 and a few
+ * hundred bytes, and a changed one is picked up immediately.
+ *
+ * This matters more than it looks. The page, its stylesheet and its script
+ * are one unit: a release changes all three together. Caching the CSS and JS
+ * for an hour while the HTML revalidated meant that after every deploy, for
+ * up to an hour, browsers paired new markup with the previous release's
+ * stylesheet — which renders as an unstyled page, not as a subtle glitch.
+ *
+ * Long-lived caching belongs on URLs that never change meaning. The image
+ * routes are exactly that (an opaque id per file) and set their own headers.
+ */
 function serveFile(req, res, filePath) {
   const ext = path.extname(filePath).toLowerCase();
   const type = STATIC_TYPES.get(ext);
@@ -69,10 +83,22 @@ function serveFile(req, res, filePath) {
 
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) return sendError(res, 404, 'Not found');
+
+    const etag = `"${crypto
+      .createHash('sha1')
+      .update(`${filePath}:${stat.size}:${stat.mtimeMs}`)
+      .digest('base64url')}"`;
+
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { etag, 'cache-control': 'no-cache' });
+      return res.end();
+    }
+
     res.writeHead(200, {
       'content-type': type,
       'content-length': stat.size,
-      'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=3600',
+      'cache-control': 'no-cache',
+      etag,
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'same-origin',
     });

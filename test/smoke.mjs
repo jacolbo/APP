@@ -366,6 +366,21 @@ check('folder tree deleted', deleted.status === 200 && deleted.data.deletedImage
 check('descendants went with it', (await call(`/api/folders/${ceremony.id}`)).status === 404);
 check('folder list empty again', (await call('/api/folders')).data.folders.length === 0);
 
+console.log('\n— assets never go stale —');
+// A release changes the page, its stylesheet and its script together. If any
+// of them can be served from cache while the others are fresh, the app renders
+// broken — so all three must revalidate.
+for (const asset of ['/', '/app.css', '/admin.js', '/gallery.js']) {
+  const first = await call(asset, { as: 'none' });
+  const cache = first.res.headers.get('cache-control') || '';
+  check(`${asset} revalidates rather than caching`, cache.includes('no-cache'), cache);
+}
+const styled = await call('/app.css', { as: 'none' });
+const tag = styled.res.headers.get('etag');
+check('the stylesheet carries an ETag', Boolean(tag), String(tag));
+const again = await call('/app.css', { as: 'none', headers: { 'if-none-match': tag } });
+check('an unchanged stylesheet costs a 304', again.status === 304, String(again.status));
+
 console.log('\n— hardening —');
 check('path traversal blocked', (await call('/../package.json', { as: 'none' })).status === 404);
 check('unknown endpoint 404s', (await call('/api/nope', { as: 'none' })).status === 404);
