@@ -321,6 +321,31 @@ const stats = (await call(`/api/folders/${gallery.id}`)).data.folder;
 check('views were counted', stats.views > 0, String(stats.views));
 check('downloads were counted', stats.downloads > 0, String(stats.downloads));
 
+console.log('\n— what clients can do —');
+const addressed = await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { slug: 'Ana-And-Tom' } });
+check('a gallery address is saved lowercased', addressed.data.folder.slug === 'ana-and-tom', String(addressed.data.folder.slug));
+check('the address opens the gallery', (await call('/api/g/ana-and-tom?clientSessionId=sess-a', { as: 'client' })).status === 200);
+check('a bad address is refused', (await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { slug: 'no spaces!' } })).status === 400);
+const other = (await call('/api/folders', { method: 'POST', body: { title: 'Rival' } })).data.folder;
+check('two galleries cannot share an address', (await call(`/api/folders/${other.id}`, { method: 'PATCH', body: { slug: 'ana-and-tom' } })).status === 409);
+
+await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { favouritesEnabled: false, downloadsEnabled: false } });
+const restricted = await call(`/api/g/${link}?clientSessionId=sess-a`, { as: 'client' });
+check('the gallery reports what is switched off', restricted.data.gallery.canFavourite === false && restricted.data.gallery.canDownload === false);
+check('favouriting is refused when switched off', (await call(`/api/g/${link}/select`, { method: 'POST', as: 'client', body: { imageId: preview1.id, clientSessionId: 'sess-a', selected: true } })).status === 403);
+check('the archive is refused when downloads are off', (await call(`/api/g/${link}/gallery.zip`, { as: 'client' })).status === 403);
+await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { favouritesEnabled: true, downloadsEnabled: true } });
+
+const duped = await call(`/api/folders/${gallery.id}/duplicate`, { method: 'POST', body: { title: 'Next wedding' } });
+check('a folder duplicates', duped.status === 201 && duped.data.folder.title === 'Next wedding');
+const dupeDetail = await call(`/api/folders/${duped.data.folder.id}`);
+check('the copy keeps the tabs', dupeDetail.data.tabs.length >= 2, String(dupeDetail.data.tabs.length));
+check('the copy carries no photos', dupeDetail.data.tabs.every((t) => t.images.length === 0));
+check('and no client picks', dupeDetail.data.selections.length === 0);
+check('the copy gets its own address', !dupeDetail.data.folder.slug);
+await call(`/api/folders/${duped.data.folder.id}`, { method: 'DELETE' });
+await call(`/api/folders/${other.id}`, { method: 'DELETE' });
+
 console.log('\n— expiry —');
 check('a nonsense date is refused', (await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { expiresAt: 'whenever' } })).status === 400);
 await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { expiresAt: '2020-01-01T00:00:00Z' } });

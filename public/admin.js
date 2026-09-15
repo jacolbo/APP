@@ -303,7 +303,7 @@ function renderStats() {
 
 function renderShare() {
   const { folder } = state;
-  const url = `${location.origin}/g/${folder.uniqueLink}`;
+  const url = `${location.origin}/g/${folder.slug || folder.uniqueLink}`;
   $('#share-url').value = url;
   $('#publish-toggle').checked = folder.status === 'published';
 
@@ -609,6 +609,22 @@ function openImageEditor(image, images) {
   close = openModal(card);
 }
 
+/** An On/Off row: what it controls on the left, its state on the right. */
+function toggleRow(label, help, checked) {
+  const input = h('input', { type: 'checkbox', checked: checked ? true : undefined });
+  const row = h('label', { class: 'toggle-row' }, [
+    h('span', {}, [
+      h('span', { class: 'toggle-label', text: label }),
+      help ? h('span', { class: 'toggle-help', text: help }) : null,
+    ]),
+    h('span', { class: 'toggle-state' }, [input, h('span', { class: 'toggle-word' })]),
+  ]);
+  const paint = () => { row.querySelector('.toggle-word').textContent = input.checked ? 'On' : 'Off'; };
+  input.addEventListener('change', paint);
+  paint();
+  return { row, input };
+}
+
 function openSettings() {
   const { folder } = state;
   const title = h('input', { type: 'text', value: folder.title });
@@ -627,6 +643,11 @@ function openSettings() {
     type: 'date',
     value: folder.expiresAt ? folder.expiresAt.slice(0, 10) : '',
   });
+  const slug = h('input', { type: 'text', value: folder.slug || '', placeholder: 'smith-wedding' });
+  const downloads = toggleRow('Download', 'Let clients save photos. The PIN is still asked for.', folder.downloadsEnabled);
+  const favourites = toggleRow('Favourites', 'Let clients heart photos and send you a shortlist.', folder.favouritesEnabled);
+  const slideshow = toggleRow('Slideshow', 'Let clients play the gallery full screen.', folder.slideshowEnabled);
+  const sharing = toggleRow('Sharing', 'Let clients pass the gallery or their picks on.', folder.sharingEnabled);
   const logoInput = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/svg+xml', hidden: true });
   const logoPreview = h('img', {
     src: folder.logoUrl || '',
@@ -664,6 +685,11 @@ function openSettings() {
     body.watermarkText = watermark.value.trim();
     // A date alone means end of that day, not midnight at its start.
     body.expiresAt = expiresAt.value ? `${expiresAt.value}T23:59:59` : '';
+    body.slug = slug.value.trim();
+    body.downloadsEnabled = downloads.input.checked;
+    body.favouritesEnabled = favourites.input.checked;
+    body.slideshowEnabled = slideshow.input.checked;
+    body.sharingEnabled = sharing.input.checked;
     try {
       await api(`/api/folders/${folder.id}`, { method: 'PATCH', body });
       close();
@@ -676,9 +702,20 @@ function openSettings() {
 
   const card = h('div', { class: 'modal-card' }, [
     h('h2', { text: 'Folder settings' }),
+    h('p', { class: 'settings-head', text: 'General' }),
     h('label', { class: 'field' }, [h('span', { text: 'Name' }), title]),
     h('label', { class: 'field' }, [h('span', { text: 'Client name' }), clientName]),
     h('label', { class: 'field' }, [h('span', { text: 'Intro note' }), description]),
+    h('label', { class: 'field' }, [h('span', { text: 'Gallery address' }), slug]),
+    h('p', { class: 'hint', text: `Clients open ${location.origin}/g/… — put a word here instead of the random code. Blank keeps the code.` }),
+
+    h('p', { class: 'settings-head', text: 'What clients can do' }),
+    downloads.row,
+    favourites.row,
+    slideshow.row,
+    sharing.row,
+
+    h('p', { class: 'settings-head', text: 'Privacy' }),
     h('label', { class: 'field' }, [h('span', { text: 'Download PIN' }), pin]),
     h('p', { class: 'hint', text: folder.inheritsPin
       ? 'Blank means this folder keeps using the PIN from a folder above it.'
@@ -700,7 +737,7 @@ function openSettings() {
     h('label', { class: 'field' }, [h('span', { text: 'Send selections to (webhook URL)' }), webhook]),
     h('p', { class: 'hint', text: 'Where "Send to photographer" POSTs the shortlist. Blank uses the WEBHOOK_URL the server was started with, if any.' }),
 
-    h('h2', { style: 'margin-top:26px', text: 'How it looks' }),
+    h('p', { class: 'settings-head', text: 'How it looks' }),
     h('label', { class: 'field' }, [h('span', { text: 'Accent colour' }), brandColor]),
     h('div', { class: 'field' }, [
       h('span', { text: 'Your logo' }),
@@ -730,6 +767,19 @@ function openSettings() {
         class: 'btn btn-sm',
         text: 'Clear PIN',
         onclick: async () => { close(); await patchFolder({ downloadPin: '' }, 'PIN cleared'); },
+      }),
+      h('button', {
+        class: 'btn btn-sm',
+        text: 'Duplicate',
+        title: 'Copy the tabs and settings, without the photos',
+        onclick: async () => {
+          close();
+          try {
+            const { folder: copy } = await api(`/api/folders/${folder.id}/duplicate`, { method: 'POST' });
+            toast('Duplicated — photos not copied');
+            await go(copy.id);
+          } catch (err) { toast(err.message, true); }
+        },
       }),
       h('button', {
         class: 'btn btn-sm',

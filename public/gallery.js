@@ -702,7 +702,12 @@ function renderCover() {
   description.textContent = gallery.description || '';
 
   $('#lock-button').hidden = !gallery.unlocked;
-  $('#download-all').hidden = !gallery.downloadableCount;
+  // The studio's switches decide which controls exist at all.
+  $('#share-button').hidden = gallery.canShare === false;
+  $('#slideshow-button').hidden = gallery.canSlideshow === false;
+  $('#jump-favorites').hidden = gallery.canFavourite === false;
+  $('#favorites-section').hidden = gallery.canFavourite === false;
+  $('#download-all').hidden = !gallery.downloadableCount || gallery.canDownload === false;
   $('#download-all').title = `Download all ${gallery.downloadableCount} photos`;
 }
 
@@ -749,7 +754,7 @@ function renderFavorites() {
 
   // Only offered when there is actually something downloadable in the picks.
   const downloadable = state.favorites.some((fav) => fav.downloadable && !fav.locked);
-  $('#download-picks').hidden = !downloadable;
+  $('#download-picks').hidden = !downloadable || state.gallery.canDownload === false;
 
   const send = $('#send-button');
   // Hidden entirely when the studio has not set a handoff address, rather
@@ -818,7 +823,9 @@ function imageTile(image, tab, images) {
       class: 'tile-open',
       'aria-pressed': favorited ? 'true' : 'false',
       'aria-label': `${favorited ? 'Remove' : 'Add'} ${image.title || image.fileName || 'photo'} ${favorited ? 'from' : 'to'} favourites`,
-      onclick: () => toggleFavorite(image, undefined, tab),
+      onclick: () => (state.gallery.canFavourite === false
+        ? openLightbox(images, images.indexOf(image))
+        : toggleFavorite(image, undefined, tab)),
     }, [
       h('img', { src: image.thumbUrl, alt: image.title || '', loading: 'lazy' }),
     ]),
