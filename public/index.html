@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/app.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23101013'/><circle cx='16' cy='16' r='6' fill='%23e5b487'/></svg>">
 </head>
-<body>
+<body class="studio-body">
 
   <!-- Sign in -->
   <div class="centered" id="login-view" hidden>
@@ -29,141 +29,165 @@
   </div>
 
   <!-- Studio -->
-  <div id="app-view" hidden>
-    <header class="topbar">
-      <div class="wrap topbar-inner">
-        <h1 class="brand"><span class="dot"></span> Pose Board</h1>
-        <span class="spacer"></span>
-        <button class="btn btn-sm btn-ghost" id="nav-home" hidden>← All folders</button>
-        <button class="btn btn-sm btn-primary" id="new-folder">+ New folder</button>
-        <button class="btn btn-sm btn-ghost" id="logout">Sign out</button>
-      </div>
-    </header>
+  <div class="studio" id="app-view" hidden>
 
-    <main class="wrap" style="padding-block: 26px 60px">
-      <p class="badge warn" id="default-password-banner" hidden style="margin-bottom:18px">
+    <!-- Left rail -->
+    <aside class="studio-nav">
+      <div class="studio-brand"><span class="dot"></span> Client Gallery</div>
+
+      <nav class="nav-list" id="nav-list">
+        <button class="nav-item is-active" id="nav-home" type="button"><span class="nav-icon">▦</span> Folders</button>
+      </nav>
+
+      <!-- Inside a folder: its cover, its tabs -->
+      <div class="rail-folder" id="rail-folder" hidden>
+        <div class="rail-cover" id="rail-cover"></div>
+        <div class="rail-title" id="rail-title"></div>
+
+        <div class="rail-head">
+          <span>Tabs</span>
+          <button class="rail-add" id="new-tab" type="button">+ Add tab</button>
+        </div>
+        <div class="tablist" id="admin-tabbar" role="tablist"></div>
+
+        <div class="rail-head" style="margin-top:18px">
+          <span>Folders inside</span>
+          <button class="rail-add" id="new-subfolder" type="button">+ Add</button>
+        </div>
+        <div class="rail-subfolders" id="rail-subfolders"></div>
+      </div>
+
+      <div class="nav-foot">
+        <button class="nav-item" id="logout" type="button"><span class="nav-icon">⎋</span> Sign out</button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="studio-main">
+      <p class="badge warn" id="default-password-banner" hidden style="margin:20px 28px 0">
         ⚠ Running with the default password — set ADMIN_PASSWORD before sharing this online.
       </p>
 
-      <!-- All top-level folders -->
+      <!-- All folders -->
       <section id="root-view" hidden>
-        <div class="row" style="margin-bottom:18px">
-          <h2 style="font-family:var(--serif); font-size:22px; margin:0">Folders</h2>
+        <header class="page-head">
+          <h1>Folders</h1>
+          <label class="search">
+            <span class="search-icon">⌕</span>
+            <input type="search" id="folder-search" placeholder="Search">
+          </label>
           <span class="spacer"></span>
-          <input type="search" id="folder-search" placeholder="Search folders…" style="max-width:240px">
+          <button class="btn btn-primary" id="new-folder">+ New folder</button>
+        </header>
+
+        <div class="filter-row" id="filter-row">
+          <button class="pill is-active" data-filter="all" type="button">All</button>
+          <button class="pill" data-filter="published" type="button">Live</button>
+          <button class="pill" data-filter="draft" type="button">Draft</button>
+          <button class="pill" data-filter="picks" type="button">Has picks</button>
+          <span class="spacer"></span>
+          <span class="muted small" id="folder-count"></span>
         </div>
-        <div class="cards" id="root-cards"></div>
-        <div class="empty" id="root-empty" hidden>
-          <p style="margin:0 0 12px"><strong>No folders yet.</strong></p>
-          <p class="small" style="margin:0 0 16px">Make one per shoot or client. Each folder gets a Previews tab and a PIN-protected Final images tab, and can hold folders of its own.</p>
-          <button class="btn btn-primary" id="empty-new-folder">+ New folder</button>
+
+        <div class="page-body">
+          <div class="cards" id="root-cards"></div>
+          <div class="empty" id="root-empty" hidden>
+            <p style="margin:0 0 12px"><strong>No folders yet.</strong></p>
+            <p class="small" style="margin:0 0 16px">Make one per shoot or client. Each gets a Previews tab and a PIN-protected Final images tab, and can hold folders of its own.</p>
+            <button class="btn btn-primary" id="empty-new-folder">+ New folder</button>
+          </div>
         </div>
       </section>
 
       <!-- One folder -->
       <section id="folder-view" hidden>
+        <header class="page-head folder-head">
+          <button class="back-btn" id="back-btn" type="button" aria-label="Back">‹</button>
+          <div class="folder-heading">
+            <h1 id="folder-title"></h1>
+            <p class="muted small" id="folder-subtitle"></p>
+          </div>
+          <span class="badge" id="folder-status"></span>
+          <span class="spacer"></span>
+          <button class="btn btn-sm" id="folder-settings">Settings</button>
+          <a class="btn btn-sm" id="preview-link" target="_blank" rel="noopener">Preview</a>
+          <button class="btn btn-sm btn-primary" id="share-open">Share</button>
+        </header>
+
         <nav class="crumbs" id="admin-crumbs" aria-label="Folders"></nav>
 
-        <div class="row" style="align-items:flex-start; margin-bottom:6px">
-          <div style="min-width:0">
-            <h2 id="folder-title" style="font-family:var(--serif); font-size:26px; margin:0 0 4px; overflow-wrap:anywhere"></h2>
-            <p class="muted small" id="folder-subtitle" style="margin:0"></p>
-          </div>
-          <span class="spacer"></span>
-          <div class="row">
-            <span class="badge" id="folder-status"></span>
-            <button class="btn btn-sm" id="folder-settings">Settings</button>
-          </div>
-        </div>
-
-        <div class="panel" style="margin-top:18px">
-          <h2>At a glance</h2>
-          <div class="stat-row" id="folder-stats"></div>
-        </div>
-
-        <div class="panel">
-          <h2>Share with your client</h2>
-          <label class="switch" style="margin-bottom:12px">
-            <input type="checkbox" id="publish-toggle">
-            <span>Gallery is live — anyone with the link can open it</span>
-          </label>
-          <div class="share-link">
-            <input type="text" id="share-url" readonly aria-label="Share link">
-            <button class="btn btn-sm" id="copy-share">Copy</button>
-          </div>
-          <p class="hint" id="share-hint"></p>
-        </div>
-
-        <div class="row" style="margin:26px 0 12px">
-          <h2 style="font-family:var(--serif); font-size:20px; margin:0">Folders inside</h2>
-          <span class="spacer"></span>
-          <button class="btn btn-sm" id="new-subfolder">+ Add a folder here</button>
-        </div>
-        <div class="cards" id="child-cards"></div>
-        <p class="hint" id="child-empty" hidden>No folders inside this one yet.</p>
-
-        <div class="row" style="margin:26px 0 0">
-          <h2 style="font-family:var(--serif); font-size:20px; margin:0">Tabs</h2>
-          <span class="spacer"></span>
-          <button class="btn btn-sm" id="new-tab">+ New tab</button>
-        </div>
-        <div class="tabbar" id="admin-tabbar" role="tablist"></div>
-
-        <div class="panel" id="tab-panel" hidden>
-          <h2>This tab</h2>
-          <div class="row" style="margin-bottom:12px">
-            <label class="field" style="flex:1 1 200px; margin:0">
-              <span>Name</span>
-              <input type="text" id="tab-title">
+        <div class="page-body">
+          <div class="panel" id="share-panel">
+            <h2>Share with your client</h2>
+            <label class="switch" style="margin-bottom:12px">
+              <input type="checkbox" id="publish-toggle">
+              <span>Gallery is live — anyone with the link can open it</span>
             </label>
-            <label class="field" style="flex:0 1 220px; margin:0">
-              <span>Who can see it</span>
-              <select id="tab-access">
-                <option value="open">Anyone with the link</option>
-                <option value="pin">Only after the PIN</option>
-              </select>
-            </label>
+            <div class="share-link">
+              <input type="text" id="share-url" readonly aria-label="Share link">
+              <button class="btn btn-sm" id="copy-share">Copy</button>
+            </div>
+            <p class="hint" id="share-hint"></p>
+            <div class="stat-row" id="folder-stats" style="margin-top:22px"></div>
           </div>
-          <label class="switch" style="margin-bottom:10px">
-            <input type="checkbox" id="tab-downloadable">
-            <span>Clients can download these (always asks for the PIN first)</span>
-          </label>
-          <p class="hint" id="tab-warning" hidden></p>
-          <div class="row" style="margin-top:14px">
-            <button class="btn btn-sm btn-primary" id="save-tab">Save tab</button>
-            <button class="btn btn-sm" id="download-tab">Download tab as zip</button>
+
+          <div class="cards folder-cards" id="child-cards"></div>
+          <p class="hint" id="child-empty" hidden></p>
+
+          <div class="tab-head">
+            <h2 id="upload-target"></h2>
+            <span class="muted small" id="image-count"></span>
             <span class="spacer"></span>
-            <button class="btn btn-sm btn-danger" id="delete-tab">Delete this tab</button>
+            <label class="switch small"><input type="checkbox" id="only-picked"><span>Only client picks</span></label>
+            <button class="btn btn-sm" id="download-tab">Download zip</button>
+            <button class="btn btn-sm" id="tab-settings-toggle">Tab settings</button>
+            <button class="btn btn-sm btn-primary" id="pick-files">+ Add media</button>
           </div>
-        </div>
 
-        <div class="panel">
-          <h2>Add images to <span id="upload-target"></span></h2>
+          <div class="panel" id="tab-panel" hidden>
+            <div class="row" style="margin-bottom:12px">
+              <label class="field" style="flex:1 1 200px; margin:0">
+                <span>Name</span>
+                <input type="text" id="tab-title">
+              </label>
+              <label class="field" style="flex:0 1 220px; margin:0">
+                <span>Who can see it</span>
+                <select id="tab-access">
+                  <option value="open">Anyone with the link</option>
+                  <option value="pin">Only after the PIN</option>
+                </select>
+              </label>
+            </div>
+            <label class="switch" style="margin-bottom:10px">
+              <input type="checkbox" id="tab-downloadable">
+              <span>Clients can download these (always asks for the PIN first)</span>
+            </label>
+            <p class="hint" id="tab-warning" hidden></p>
+            <div class="row" style="margin-top:14px">
+              <button class="btn btn-sm btn-primary" id="save-tab">Save tab</button>
+              <span class="spacer"></span>
+              <button class="btn btn-sm btn-danger" id="delete-tab">Delete this tab</button>
+            </div>
+          </div>
+
           <div class="dropzone" id="dropzone">
             <strong>Drop images here</strong>
-            <span class="small">or</span>
-            <button class="btn btn-sm" id="pick-files" style="margin-left:6px">Choose files</button>
+            <span class="small">or use <em>+ Add media</em></span>
             <p class="hint" id="upload-hint" style="margin-top:10px"></p>
             <div class="progress" id="upload-progress" hidden><i></i></div>
           </div>
           <input type="file" id="file-input" accept="image/*" multiple hidden>
-        </div>
 
-        <div class="row" style="margin:26px 0 14px">
-          <h2 style="font-family:var(--serif); font-size:20px; margin:0">Images <span class="muted" id="image-count"></span></h2>
-          <span class="spacer"></span>
-          <label class="switch small"><input type="checkbox" id="only-picked"><span>Only client picks</span></label>
-        </div>
+          <div class="photo-grid dense" id="admin-grid"></div>
+          <div class="empty" id="grid-empty" hidden>
+            <p style="margin:0"><strong>Nothing in this tab yet.</strong></p>
+            <p class="small" style="margin:8px 0 0">Drop images above — drag them afterwards to set the order your client sees.</p>
+          </div>
 
-        <div class="photo-grid" id="admin-grid"></div>
-        <div class="empty" id="grid-empty" hidden>
-          <p style="margin:0"><strong>Nothing in this tab yet.</strong></p>
-          <p class="small" style="margin:8px 0 0">Drop images above — drag them afterwards to set the order your client sees.</p>
-        </div>
-
-        <div class="panel" id="selections-panel" hidden style="margin-top:26px">
-          <h2>What your client picked</h2>
-          <div id="selections-summary" class="stack"></div>
+          <div class="panel" id="selections-panel" hidden style="margin-top:26px">
+            <h2>What your client picked</h2>
+            <div id="selections-summary" class="stack"></div>
+          </div>
         </div>
       </section>
     </main>

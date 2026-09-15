@@ -650,6 +650,62 @@ textarea { resize: vertical; min-height: 88px; }
 
 .cover-copy .btn { margin-top: 6px; }
 
+/* ---------- gallery toolbar ---------- */
+
+.icon-btn.flat {
+  width: auto;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 10px;
+  gap: 5px;
+  border-radius: var(--radius);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-soft);
+  font-size: 15px;
+}
+
+.icon-btn.flat:hover { background: var(--surface-2); transform: none; color: var(--text); }
+
+/* ---------- slideshow ---------- */
+
+.slideshow {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: #0d0c0b;
+  display: grid;
+  place-items: center;
+}
+
+.slideshow img {
+  max-width: 100%;
+  max-height: 100dvh;
+  width: auto;
+  object-fit: contain;
+}
+
+.slideshow-bar {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow);
+}
+
+.slideshow-count {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+}
+
 /* ---------- branding ---------- */
 
 .brand img {
@@ -840,4 +896,312 @@ textarea { resize: vertical; min-height: 88px; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
+}
+
+/* =====================================================================
+   Studio shell — a fixed rail and a scrolling main column, the shape the
+   category has settled on. The rail carries what you switch between (the
+   folder's tabs, the folders inside it); the main column carries what you
+   are working on.
+
+   The studio runs a green accent while client galleries keep the warm one:
+   the two sides are never on screen together, and it keeps the studio
+   chrome from competing with a photographer's own branding.
+   ===================================================================== */
+
+.studio-body { --accent: #0e9e7e; --accent-soft: #e6f5f0; --accent-ink: #ffffff; }
+.studio-body .btn-primary:hover { background: #0b8569; border-color: #0b8569; }
+
+.studio {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+.studio-nav {
+  border-right: 1px solid var(--line-soft);
+  padding: 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  overflow-y: auto;
+}
+
+.studio-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-family: var(--serif);
+  font-size: 16px;
+  font-weight: 500;
+  padding: 4px 8px 0;
+}
+
+.studio-brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+.nav-list { display: flex; flex-direction: column; gap: 2px; }
+.nav-foot { margin-top: auto; }
+
+.nav-item {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-soft);
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  width: 100%;
+}
+
+.nav-item:hover { background: var(--surface-2); color: var(--text); }
+.nav-item.is-active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.nav-icon { font-size: 13px; opacity: 0.8; }
+
+/* ---------- the rail while inside a folder ---------- */
+
+.rail-folder { display: flex; flex-direction: column; gap: 10px; }
+
+.rail-cover {
+  aspect-ratio: 4 / 3;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.rail-cover img { width: 100%; height: 100%; object-fit: cover; }
+
+.rail-title {
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 500;
+  padding: 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.rail-add {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+
+.rail-add:hover { background: var(--accent-soft); }
+
+/* A vertical tab list, not the client's horizontal bar. */
+.tablist { display: flex; flex-direction: column; gap: 2px; }
+
+.tablist .tab {
+  border: 0;
+  border-radius: var(--radius);
+  justify-content: flex-start;
+  width: 100%;
+  padding: 9px 10px;
+  margin: 0;
+  font-size: 14px;
+  gap: 8px;
+}
+
+.tablist .tab:hover { background: var(--surface-2); }
+.tablist .tab.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.tablist .tab .tab-count { margin-left: auto; }
+.tablist .tab.active .tab-count { background: #ffffff; color: var(--accent); }
+
+.rail-subfolders { display: flex; flex-direction: column; gap: 2px; }
+
+.rail-subfolder {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text-soft);
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.rail-subfolder:hover { background: var(--surface-2); color: var(--text); }
+
+/* ---------- main column ---------- */
+
+.studio-main { min-width: 0; display: flex; flex-direction: column; }
+
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 24px 28px 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.page-head h1 {
+  font-family: var(--serif);
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.folder-head { align-items: flex-start; }
+
+/* A long intro note used to push the actions onto their own row. The heading
+   takes the slack and the note truncates instead. */
+.folder-heading {
+  min-width: 0;
+  max-width: 460px;
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.folder-heading h1 { font-size: 22px; }
+
+#folder-subtitle {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.back-btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: var(--radius);
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-soft);
+}
+
+.back-btn:hover { background: var(--surface-2); }
+
+.search {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  max-width: 260px;
+  flex: 1 1 180px;
+}
+
+.search-icon { color: var(--muted); font-size: 15px; }
+.search input { border: 0; padding: 8px 0; background: none; }
+.search input:focus { box-shadow: none; }
+.search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.pill {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 13px;
+  cursor: pointer;
+  color: var(--text-soft);
+}
+
+.pill:hover { background: var(--surface-2); }
+.pill.is-active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+.page-body { padding: 24px 28px 60px; }
+
+.tab-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 26px 0 16px;
+}
+
+.tab-head h2 {
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 500;
+  margin: 0;
+}
+
+/* Pixieset-style contact sheet: many small frames, tight gaps. */
+.photo-grid.dense { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 10px; }
+.photo-grid.dense .tile { aspect-ratio: 1 / 1; }
+
+/* Card titles read as labels in the studio listing. */
+#root-cards .card-title,
+.folder-cards .card-title {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.count-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  margin-right: 7px;
+  vertical-align: 1px;
+}
+
+.count-dot.draft { background: var(--line-firm); }
+
+@media (max-width: 900px) {
+  .studio { grid-template-columns: minmax(0, 1fr); }
+  .studio-nav {
+    position: static;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .page-head, .filter-row, .page-body { padding-left: 18px; padding-right: 18px; }
 }

@@ -23,7 +23,10 @@
       <div class="wrap topbar-inner">
         <span class="brand"><img id="brand-logo" alt="" hidden><span class="dot" id="brand-dot"></span> <span id="brand-title">Gallery</span></span>
         <span class="spacer"></span>
-        <button class="btn btn-sm btn-ghost" id="jump-favorites">♥ <span id="top-count">0</span></button>
+        <button class="icon-btn flat" id="jump-favorites" title="Your favourites">♥ <span id="top-count">0</span></button>
+        <button class="icon-btn flat" id="download-all" hidden title="Download the whole gallery">⤓</button>
+        <button class="icon-btn flat" id="share-button" title="Share this gallery">↗</button>
+        <button class="icon-btn flat" id="slideshow-button" title="Play a slideshow">▷</button>
         <button class="btn btn-sm btn-ghost" id="lock-button" hidden title="Lock the protected tabs again">Lock</button>
       </div>
     </header>
@@ -65,6 +68,17 @@
       <div class="photo-grid" id="image-grid"></div>
       <div class="empty" id="grid-empty" hidden></div>
     </main>
+  </div>
+
+  <div class="slideshow" id="slideshow" hidden>
+    <img id="slideshow-image" alt="">
+    <div class="slideshow-bar">
+      <button class="icon-btn" id="slideshow-prev" aria-label="Previous">‹</button>
+      <button class="icon-btn" id="slideshow-play" aria-label="Pause">❚❚</button>
+      <button class="icon-btn" id="slideshow-next" aria-label="Next">›</button>
+      <span class="slideshow-count" id="slideshow-count"></span>
+      <button class="icon-btn" id="slideshow-close" aria-label="Close">✕</button>
+    </div>
   </div>
 
   <div id="modal-root"></div>

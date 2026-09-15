@@ -16,6 +16,7 @@ const state = {
   selections: [],
   rootFolders: [],
   search: '',
+  filter: 'all',
   onlyPicked: false,
 };
 
@@ -238,25 +239,37 @@ function folderCard(folder) {
     ]),
     h('div', { class: 'card-body' }, [
       h('p', { class: 'card-title', text: folder.title }),
-      h('p', { class: 'card-meta', text: folder.clientName || 'No client name' }),
-      h('div', { class: 'card-foot' }, [
-        h('span', { class: `badge${folder.status === 'published' ? ' live' : ''}`, text: folder.status === 'published' ? 'Live' : 'Draft' }),
-        h('span', { class: 'muted small', text: `${folder.imageCount} image${folder.imageCount === 1 ? '' : 's'}` }),
-        folder.folderCount > 0 && h('span', { class: 'muted small', text: `${folder.folderCount} folder${folder.folderCount === 1 ? '' : 's'}` }),
-        folder.selectionCount > 0 && h('span', { class: 'badge', text: `♥ ${folder.selectionCount}` }),
+      h('p', { class: 'card-meta' }, [
+        h('span', { class: `count-dot${folder.status === 'published' ? '' : ' draft'}` }),
+        `${folder.imageCount} item${folder.imageCount === 1 ? '' : 's'}`,
+        folder.folderCount > 0 ? ` · ${folder.folderCount} folder${folder.folderCount === 1 ? '' : 's'}` : '',
+        folder.selectionCount > 0 ? ` · ♥ ${folder.selectionCount}` : '',
       ]),
     ]),
   ]);
 }
 
+const FILTERS = {
+  all: () => true,
+  published: (f) => f.status === 'published',
+  draft: (f) => f.status !== 'published',
+  picks: (f) => f.selectionCount > 0,
+};
+
 function renderRoot() {
   const term = state.search.trim().toLowerCase();
-  const visible = term
-    ? state.rootFolders.filter((f) => `${f.title} ${f.clientName}`.toLowerCase().includes(term))
-    : state.rootFolders;
+  const visible = state.rootFolders
+    .filter(FILTERS[state.filter] || FILTERS.all)
+    .filter((f) => !term || `${f.title} ${f.clientName}`.toLowerCase().includes(term));
 
   $('#root-cards').replaceChildren(...visible.map(folderCard));
   $('#root-empty').hidden = state.rootFolders.length > 0;
+  $('#folder-count').textContent = visible.length === state.rootFolders.length
+    ? `${visible.length} folder${visible.length === 1 ? '' : 's'}`
+    : `${visible.length} of ${state.rootFolders.length}`;
+  for (const pill of document.querySelectorAll('#filter-row .pill')) {
+    pill.classList.toggle('is-active', pill.dataset.filter === state.filter);
+  }
 }
 
 // ---------- rendering: one folder ----------
@@ -305,6 +318,15 @@ function renderShare() {
 function renderChildren() {
   $('#child-cards').replaceChildren(...state.children.map(folderCard));
   $('#child-empty').hidden = state.children.length > 0;
+  $('#child-empty').textContent = 'No folders inside this one yet.';
+  $('#rail-subfolders').replaceChildren(...state.children.map((folder) => h('button', {
+    class: 'rail-subfolder',
+    type: 'button',
+    onclick: () => go(folder.id),
+  }, [
+    h('span', { class: `count-dot${folder.status === 'published' ? '' : ' draft'}` }),
+    folder.title,
+  ])));
 }
 
 function renderTabs() {
@@ -321,9 +343,7 @@ function renderTabs() {
   ])));
 
   const tab = activeTab();
-  const panel = $('#tab-panel');
-  panel.hidden = !tab;
-  if (!tab) return;
+  if (!tab) { $('#tab-panel').hidden = true; return; }
 
   $('#tab-title').value = tab.title;
   $('#tab-access').value = tab.access;
@@ -466,16 +486,25 @@ function shortName(imageId) {
 function renderFolder() {
   const { folder } = state;
   $('#folder-title').textContent = folder.title;
+  // "level 1 of 20" is a fact about the data model, not about the shoot. It
+  // only earns a place once a folder is actually nested.
   $('#folder-subtitle').textContent = [
     folder.clientName,
-    `level ${folder.depth} of ${state.maxDepth}`,
+    folder.depth > 1 ? `${folder.depth} levels in` : '',
     folder.description,
   ].filter(Boolean).join(' · ');
+  $('#folder-subtitle').title = folder.description || '';
 
   const badge = $('#folder-status');
   const expired = folder.expired;
   badge.textContent = expired ? 'Expired' : folder.status === 'published' ? 'Live' : 'Draft';
   badge.className = `badge${expired ? ' warn' : folder.status === 'published' ? ' live' : ''}`;
+
+  $('#rail-title').textContent = folder.title;
+  $('#rail-cover').replaceChildren(
+    folder.coverImageUrl ? h('img', { src: folder.coverImageUrl, alt: '' }) : '',
+  );
+  $('#preview-link').href = `${location.origin}/g/${folder.uniqueLink}`;
 
   renderCrumbs();
   renderStats();
@@ -490,7 +519,8 @@ function render() {
   const inFolder = Boolean(state.folderId);
   $('#root-view').hidden = inFolder;
   $('#folder-view').hidden = !inFolder;
-  $('#nav-home').hidden = !inFolder;
+  $('#rail-folder').hidden = !inFolder;
+  $('#nav-home').classList.toggle('is-active', !inFolder);
   if (inFolder) renderFolder();
   else renderRoot();
 }
@@ -932,6 +962,32 @@ $('#download-tab').addEventListener('click', () => {
   const tab = activeTab();
   if (tab) location.href = `/api/tabs/${tab.id}/images.zip`;
 });
+
+$('#back-btn').addEventListener('click', () => go(state.folder?.parentId || null));
+$('#share-open').addEventListener('click', async () => {
+  $('#share-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (state.folder?.status !== 'published') {
+    toast('Turn on "Gallery is live" first, then the link works', true);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText($('#share-url').value);
+    toast('Link copied');
+  } catch {
+    $('#share-url').select();
+    toast('Press ⌘C / Ctrl+C to copy');
+  }
+});
+$('#tab-settings-toggle').addEventListener('click', () => {
+  const panel = $('#tab-panel');
+  panel.hidden = !panel.hidden;
+});
+for (const pill of document.querySelectorAll('#filter-row .pill')) {
+  pill.addEventListener('click', () => {
+    state.filter = pill.dataset.filter;
+    renderRoot();
+  });
+}
 
 $('#folder-search').addEventListener('input', (event) => {
   state.search = event.target.value;

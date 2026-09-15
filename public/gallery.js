@@ -6,6 +6,8 @@
 // not in the payload until the PIN is accepted.
 
 const link = decodeURIComponent(location.pathname.replace(/^\/(g|s)\/?/, '').replace(/\/$/, ''));
+// ?picks=<session> opens someone else's shortlist, read only.
+const sharedPicks = new URLSearchParams(location.search).get('picks') || '';
 
 const state = {
   gallery: null,
@@ -14,6 +16,7 @@ const state = {
   tabs: [],
   favorites: [],
   feedback: [],   // stars and notes, including on images not favourited
+  readOnlyPicks: false,  // viewing someone else's shared shortlist
   activeTabId: null,
   sessionId: '',
   clientName: '',
@@ -372,6 +375,115 @@ async function downloadPicks() {
   location.href = `/api/g/${encodeURIComponent(link)}/selection.zip?${params}`;
 }
 
+/** Every downloadable photo in the gallery, not just the picks. */
+async function downloadEverything() {
+  if (!state.gallery.unlocked) {
+    if (!state.gallery.hasPin) {
+      toast('Your photographer has not set a download PIN yet', true);
+      return;
+    }
+    if (!await askForPin('Your photographer gave you a PIN for downloading.')) return;
+    await load(state.folder.id);
+  }
+  location.href = `/api/g/${encodeURIComponent(link)}/gallery.zip`;
+}
+
+/** Copy the gallery link, or a link to this visitor's own shortlist. */
+function openShare() {
+  const galleryUrl = `${location.origin}/g/${encodeURIComponent(link)}`;
+  const picksUrl = `${galleryUrl}?picks=${encodeURIComponent(state.sessionId)}`;
+  let close;
+
+  const copy = async (value, what) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast(`${what} copied`);
+    } catch {
+      toast('Could not copy — long-press the link to copy it', true);
+    }
+    close();
+  };
+
+  const card = h('div', { class: 'modal-card' }, [
+    h('h2', { text: 'Share' }),
+    h('p', { class: 'hint', style: 'margin-bottom:16px', text: 'Send the gallery on, or send just the photos you picked.' }),
+    h('div', { class: 'stack' }, [
+      h('button', { class: 'btn', text: 'Copy gallery link', onclick: () => copy(galleryUrl, 'Gallery link') }),
+      state.favorites.length
+        ? h('button', { class: 'btn', text: `Copy a link to my ${state.favorites.length} picks`, onclick: () => copy(picksUrl, 'Link to your picks') })
+        : h('p', { class: 'hint', style: 'margin:0', text: 'Pick some photos and you can share just those too.' }),
+      navigator.share
+        ? h('button', {
+          class: 'btn btn-primary',
+          text: 'Share…',
+          onclick: () => {
+            navigator.share({ title: state.gallery.title, url: galleryUrl }).catch(() => {});
+            close();
+          },
+        })
+        : null,
+    ]),
+    h('div', { class: 'modal-actions' }, [
+      h('button', { class: 'btn', text: 'Close', onclick: () => close() }),
+    ]),
+  ]);
+
+  const modal = h('div', { class: 'modal', onclick: (e) => { if (e.target === modal) close(); } }, [card]);
+  close = () => modal.remove();
+  $('#modal-root').append(modal);
+}
+
+/** Full-screen, auto-advancing, from whichever tab is open. */
+function startSlideshow() {
+  const tab = state.tabs.find((entry) => entry.id === state.activeTabId);
+  const images = tab && !tab.locked ? tab.images : [];
+  if (!images.length) {
+    toast('Nothing to play in this tab', true);
+    return;
+  }
+
+  let index = 0;
+  let timer = null;
+  const stage = $('#slideshow');
+  const picture = $('#slideshow-image');
+  const counter = $('#slideshow-count');
+  const play = $('#slideshow-play');
+
+  const paint = () => {
+    picture.src = images[index].url;
+    picture.alt = images[index].title || '';
+    counter.textContent = `${index + 1} / ${images.length}`;
+  };
+  const step = (delta) => { index = (index + delta + images.length) % images.length; paint(); };
+  const tick = () => { timer = setTimeout(() => { step(1); tick(); }, 4000); };
+  const pause = () => { clearTimeout(timer); timer = null; play.textContent = '▶'; };
+  const resume = () => { tick(); play.textContent = '❚❚'; };
+
+  const stop = () => {
+    pause();
+    stage.hidden = true;
+    document.removeEventListener('keydown', onKey);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  };
+
+  function onKey(event) {
+    if (event.key === 'Escape') stop();
+    if (event.key === 'ArrowLeft') { pause(); step(-1); }
+    if (event.key === 'ArrowRight') { pause(); step(1); }
+  }
+
+  $('#slideshow-prev').onclick = () => { pause(); step(-1); };
+  $('#slideshow-next').onclick = () => { pause(); step(1); };
+  $('#slideshow-play').onclick = () => (timer ? pause() : resume());
+  $('#slideshow-close').onclick = stop;
+
+  stage.hidden = false;
+  document.addEventListener('keydown', onKey);
+  stage.requestFullscreen?.().catch(() => { /* fine without it */ });
+  paint();
+  resume();
+}
+
 async function unlockTab() {
   if (!state.gallery.hasPin) {
     toast('Your photographer has not set a PIN for this gallery yet', true);
@@ -590,6 +702,8 @@ function renderCover() {
   description.textContent = gallery.description || '';
 
   $('#lock-button').hidden = !gallery.unlocked;
+  $('#download-all').hidden = !gallery.downloadableCount;
+  $('#download-all').title = `Download all ${gallery.downloadableCount} photos`;
 }
 
 function favoriteChip(fav) {
@@ -630,7 +744,8 @@ function renderFavorites() {
   $('#top-count').textContent = String(count);
   $('#favorites-empty').hidden = count > 0;
 
-  $('#restore-button').hidden = count > 0;
+  $('#restore-button').hidden = count > 0 || state.readOnlyPicks;
+  for (const button of strip.querySelectorAll('.fav-remove')) button.hidden = Boolean(state.readOnlyPicks);
 
   // Only offered when there is actually something downloadable in the picks.
   const downloadable = state.favorites.some((fav) => fav.downloadable && !fav.locked);
@@ -804,6 +919,9 @@ async function start() {
   $('#send-button').addEventListener('click', sendToPhotographer);
   $('#restore-button').addEventListener('click', restorePicks);
   $('#download-picks').addEventListener('click', downloadPicks);
+  $('#download-all').addEventListener('click', downloadEverything);
+  $('#share-button').addEventListener('click', openShare);
+  $('#slideshow-button').addEventListener('click', startSlideshow);
   $('#lock-button').addEventListener('click', async () => {
     await api('/lock', { method: 'POST' });
     await load(state.folder.id);
@@ -812,6 +930,13 @@ async function start() {
 
   try {
     await load(null);
+    if (sharedPicks && sharedPicks !== state.sessionId) {
+      const shared = await api(`/picks/${encodeURIComponent(sharedPicks)}`);
+      state.favorites = shared.favorites;
+      state.readOnlyPicks = true;
+      render();
+      toast(shared.sharedBy ? `${shared.sharedBy}'s picks` : 'A shared shortlist');
+    }
     $('#gallery-view').hidden = false;
   } catch (err) {
     showGone(err.status === 404 ? 'This link is no longer active. Ask your photographer for a new one.' : err.message);
