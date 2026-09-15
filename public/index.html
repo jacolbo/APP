@@ -185,8 +185,21 @@
           </div>
 
           <div class="panel" id="selections-panel" hidden style="margin-top:26px">
-            <h2>What your client picked</h2>
-            <div id="selections-summary" class="stack"></div>
+            <div class="row" style="margin-bottom:14px">
+              <h2 style="margin:0">Favourite activity</h2>
+              <span class="muted small" id="picks-count"></span>
+              <span class="spacer"></span>
+              <label class="switch small">
+                <span class="muted small">Sort</span>
+                <select id="picks-sort" style="width:auto; padding:5px 8px; font-size:13px">
+                  <option value="count">Most photos</option>
+                  <option value="email">By email</option>
+                  <option value="recent">Most recent</option>
+                </select>
+              </label>
+              <a class="btn btn-sm" id="picks-csv" download>Export CSV</a>
+            </div>
+            <div id="selections-summary"></div>
           </div>
         </div>
       </section>

@@ -18,6 +18,8 @@ const state = {
   search: '',
   filter: 'all',
   onlyPicked: false,
+  picksSort: 'count',   // count | email | recent
+  picksClient: null,    // filter the grid to one client's list
 };
 
 function h(tag, props = {}, children = []) {
@@ -442,7 +444,10 @@ function renderGrid() {
     return;
   }
 
-  const pickedIds = new Set(state.selections.map((s) => s.imageId));
+  const relevant = state.picksClient
+    ? state.selections.filter((s) => s.clientSessionId === state.picksClient && s.selected !== false)
+    : state.selections.filter((s) => s.selected !== false);
+  const pickedIds = new Set(relevant.map((s) => s.imageId));
   const images = state.onlyPicked ? tab.images.filter((image) => pickedIds.has(image.id)) : tab.images;
 
   $('#image-count').textContent = tab.images.length ? `· ${tab.images.length}` : '';
@@ -455,24 +460,87 @@ function renderSelections() {
   panel.hidden = state.selections.length === 0;
   if (!state.selections.length) return;
 
-  const bySession = new Map();
+  // One row per person, which is how a studio reads this: whose list, how
+  // many photos, and something to click.
+  const lists = new Map();
   for (const selection of state.selections) {
-    if (!bySession.has(selection.clientSessionId)) bySession.set(selection.clientSessionId, []);
-    bySession.get(selection.clientSessionId).push(selection);
+    if (selection.selected === false) continue;
+    if (!lists.has(selection.clientSessionId)) {
+      lists.set(selection.clientSessionId, {
+        sessionId: selection.clientSessionId,
+        name: selection.clientName || '',
+        email: selection.clientEmail || '',
+        picks: [],
+        last: selection.createdAt,
+      });
+    }
+    const list = lists.get(selection.clientSessionId);
+    list.picks.push(selection);
+    if (selection.createdAt > list.last) list.last = selection.createdAt;
+    if (!list.name && selection.clientName) list.name = selection.clientName;
+    if (!list.email && selection.clientEmail) list.email = selection.clientEmail;
   }
 
-  $('#selections-summary').replaceChildren(...[...bySession.entries()].map(([sessionId, picks]) => h('div', {}, [
-    h('p', { style: 'margin:0 0 6px' }, [
-      h('strong', { text: picks[0].clientName || picks[0].clientEmail || 'A client' }),
-      // The email is there only if they chose to give it, so fall back to the
-      // session id rather than pretending we know who this is.
-      h('span', { class: 'muted small', text: ` · ${picks.length} pick${picks.length === 1 ? '' : 's'} · ${picks.find((p) => p.clientEmail)?.clientEmail || `unnamed visitor ${sessionId.slice(0, 8)}`}` }),
+  const sorters = {
+    count: (a, b) => b.picks.length - a.picks.length,
+    email: (a, b) => (a.email || a.name || 'zz').localeCompare(b.email || b.name || 'zz'),
+    recent: (a, b) => b.last.localeCompare(a.last),
+  };
+  const rows = [...lists.values()].sort(sorters[state.picksSort] || sorters.count);
+
+  const coverFor = (list) => {
+    for (const pick of list.picks) {
+      for (const tab of state.tabs) {
+        const image = tab.images.find((entry) => entry.id === pick.imageId);
+        if (image) return image.thumbUrl;
+      }
+    }
+    return null;
+  };
+
+  $('#picks-count').textContent = `${rows.length} list${rows.length === 1 ? '' : 's'}`;
+  $('#picks-sort').value = state.picksSort;
+
+  $('#selections-summary').replaceChildren(
+    h('div', { class: 'picks-row picks-head' }, [
+      h('span', {}, ['Favourite list']),
+      h('span', {}, ['']),
+      h('span', { class: 'picks-num' }, ['Photos']),
+      h('span', {}, ['']),
     ]),
-    h('div', { class: 'row' }, picks.map((pick) => h('span', {
-      class: 'tag',
-      text: pick.note ? `${shortName(pick.imageId)} — ${pick.note}` : shortName(pick.imageId),
-    }))),
-  ])));
+    ...rows.map((list) => {
+      const active = state.picksClient === list.sessionId;
+      const cover = coverFor(list);
+      return h('div', { class: `picks-row${active ? ' is-active' : ''}` }, [
+        h('span', { class: 'picks-who' }, [
+          h('strong', { text: list.name || list.email || 'Unnamed visitor' }),
+          h('span', { class: 'muted small', text: list.email && list.name ? list.email : `id ${list.sessionId.slice(0, 8)}` }),
+        ]),
+        h('span', { class: 'picks-cover' }, [
+          cover ? h('img', { src: cover, alt: '', loading: 'lazy' }) : '',
+        ]),
+        h('span', { class: 'picks-num', text: String(list.picks.length) }),
+        h('span', { class: 'row' }, [
+          h('button', {
+            class: `btn btn-sm${active ? ' btn-primary' : ''}`,
+            text: active ? 'Showing' : 'Show picks',
+            onclick: () => {
+              state.picksClient = active ? null : list.sessionId;
+              state.onlyPicked = Boolean(state.picksClient);
+              $('#only-picked').checked = state.onlyPicked;
+              renderGrid();
+              renderSelections();
+            },
+          }),
+          h('a', {
+            class: 'btn btn-sm',
+            href: `/api/folders/${state.folderId}/picks/${encodeURIComponent(list.sessionId)}/zip`,
+            text: 'Download',
+          }),
+        ]),
+      ]);
+    }),
+  );
 }
 
 function shortName(imageId) {
@@ -505,6 +573,8 @@ function renderFolder() {
     folder.coverImageUrl ? h('img', { src: folder.coverImageUrl, alt: '' }) : '',
   );
   $('#preview-link').href = `${location.origin}/g/${folder.uniqueLink}`;
+
+  $('#picks-csv').href = `/api/folders/${folder.id}/picks.csv`;
 
   renderCrumbs();
   renderStats();
@@ -1046,7 +1116,14 @@ $('#folder-search').addEventListener('input', (event) => {
 
 $('#only-picked').addEventListener('change', (event) => {
   state.onlyPicked = event.target.checked;
+  if (!state.onlyPicked) state.picksClient = null;
   renderGrid();
+  renderSelections();
+});
+
+$('#picks-sort').addEventListener('change', (event) => {
+  state.picksSort = event.target.value;
+  renderSelections();
 });
 
 $('#publish-toggle').addEventListener('change', (event) => {

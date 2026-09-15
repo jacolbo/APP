@@ -346,6 +346,18 @@ check('the copy gets its own address', !dupeDetail.data.folder.slug);
 await call(`/api/folders/${duped.data.folder.id}`, { method: 'DELETE' });
 await call(`/api/folders/${other.id}`, { method: 'DELETE' });
 
+console.log('\n— exporting the picks —');
+const csv = await call(`/api/folders/${gallery.id}/picks.csv`);
+check('picks export as CSV', csv.status === 200 && (csv.res.headers.get('content-type') || '').includes('text/csv'));
+const csvBytes = Buffer.from(await csv.res.arrayBuffer());
+const csvBody = csvBytes.toString('utf8');
+check('the CSV names the columns', csvBody.includes('"Client","Email","File"'), csvBody.slice(0, 60));
+check('the CSV carries a picked file', csvBody.includes('preview-01.png'), csvBody.slice(0, 200));
+check('the CSV starts with a BOM so Excel reads UTF-8', csvBytes.subarray(0, 3).toString('hex') === 'efbbbf', csvBytes.subarray(0, 3).toString('hex'));
+const onePerson = await call(`/api/folders/${gallery.id}/picks/sess-a/zip`);
+check('one client\'s list zips on its own', onePerson.status === 200);
+check('an unknown list is refused', (await call(`/api/folders/${gallery.id}/picks/nobody/zip`)).status === 404);
+
 console.log('\n— expiry —');
 check('a nonsense date is refused', (await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { expiresAt: 'whenever' } })).status === 400);
 await call(`/api/folders/${gallery.id}`, { method: 'PATCH', body: { expiresAt: '2020-01-01T00:00:00Z' } });
