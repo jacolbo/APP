@@ -25,7 +25,26 @@ This repo already contains the config each one needs: `render.yaml`, `fly.toml`,
 
 ---
 
+## Just want to look at it? — GitHub Codespaces
+
+Nothing to install, nothing to deploy. On the repository page: **Code → Codespaces
+→ Create codespace**. It builds a container, starts the app and opens it in a
+browser tab. Sign in with the password `preview`.
+
+This is for *looking*, not for clients: a Codespace stops when you stop using it,
+the forwarded port is private to your account, and the photo library disappears
+with the container. GitHub's free allowance for personal accounts covers casual
+use; check your own account's limits before leaning on it.
+
+To send links to actual clients, use one of the options below — they give the app
+a permanent address and a disk that survives a restart.
+
 ## Option A — Render (no command line)
+
+> `render.yaml` names the branch it deploys. Check that line matches the branch
+> you actually want live before you create the Blueprint — Render will happily
+> deploy an older branch without complaining.
+
 
 1. Create an account at [render.com](https://render.com) and connect your GitHub
    account so it can see `jacolbo/APP`.
