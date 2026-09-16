@@ -20,11 +20,11 @@ function freePort() {
   });
 }
 
-export async function startServer({ password = 'test-password' } = {}) {
+export async function startServer({ password = 'test-password', env = {} } = {}) {
   const dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'poseboard-test-'));
   const port = await freePort();
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, ADMIN_PASSWORD: password },
+    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, ADMIN_PASSWORD: password, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 

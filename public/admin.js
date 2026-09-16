@@ -1079,6 +1079,222 @@ async function uploadFiles(fileList) {
   else toast(`${files.length} image${files.length === 1 ? '' : 's'} added`);
 }
 
+// ---------- importing from google drive ----------
+
+/**
+ * Pulls one Drive original through the server, scales it here, and stores only
+ * the scaled copy.
+ *
+ * The original deliberately never lands on the server's disk — the image row
+ * keeps the Drive id instead, and the full-resolution file is fetched again
+ * only when a client passes the PIN and downloads. That is the whole point of
+ * pointing the gallery at Drive rather than copying Drive into it.
+ */
+async function importOne(driveFile, onProgress) {
+  const response = await fetch(`/api/drive/files/${encodeURIComponent(driveFile.id)}/content`, {
+    credentials: 'same-origin',
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(detail.error || `Drive returned ${response.status}`);
+  }
+  const blob = await response.blob();
+
+  // Same rule as a dragged-in file: the mark goes on tabs the client browses,
+  // never on the ones they pay to download.
+  const tab = activeTab();
+  const watermark = (!tab || tab.downloadable) ? '' : (state.folder.watermarkText || '');
+
+  // Unlike uploadOne, this always scales. Storing the Drive original here
+  // would defeat the point and double the storage.
+  const scaled = await renderScaled(blob, DISPLAY_MAX_EDGE, watermark ? 0.88 : 0.86, watermark)
+    .catch(() => null);
+  if (!scaled?.blob) throw new Error('could not be read as an image in the browser');
+
+  const thumb = await renderScaled(blob, THUMB_MAX_EDGE, 0.82).catch(() => null);
+
+  const query = `?w=${scaled.width}&h=${scaled.height}&driveId=${encodeURIComponent(driveFile.id)}`;
+  const { image } = await uploadBinary(
+    `/api/tabs/${state.activeTabId}/images${query}`,
+    scaled.blob,
+    {
+      'content-type': 'image/jpeg',
+      'x-filename': driveFile.name.replace(/[^\x20-\x7E]/g, '_').slice(0, 120),
+    },
+    onProgress,
+  );
+
+  if (thumb?.blob) {
+    await uploadBinary(`/api/images/${image.id}/thumbnail`, thumb.blob, { 'content-type': 'image/jpeg' })
+      .catch(() => { /* the scaled image doubles as its own thumbnail */ });
+  }
+  return image;
+}
+
+async function importFiles(driveFiles) {
+  const bar = $('#upload-progress');
+  const fill = bar.querySelector('i');
+  const hint = $('#upload-hint');
+  bar.hidden = false;
+
+  const failures = [];
+  for (const [index, file] of driveFiles.entries()) {
+    hint.textContent = `Importing ${index + 1} of ${driveFiles.length} — ${file.name}`;
+    try {
+      await importOne(file, (fraction) => {
+        fill.style.width = `${Math.round(((index + fraction) / driveFiles.length) * 100)}%`;
+      });
+    } catch (err) {
+      failures.push(`${file.name}: ${err.message}`);
+    }
+  }
+
+  fill.style.width = '100%';
+  setTimeout(() => { bar.hidden = true; fill.style.width = '0%'; }, 400);
+  hint.textContent = failures.length ? failures.join(' · ') : '';
+  await refresh();
+
+  const done = driveFiles.length - failures.length;
+  if (failures.length) toast(`${done} imported, ${failures.length} failed`, true);
+  else toast(`${done} photo${done === 1 ? '' : 's'} imported from Drive`);
+}
+
+function bytes(n) {
+  if (!n) return '';
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function openDriveImport() {
+  if (!state.activeTabId) {
+    toast('Open a tab first, then import into it', true);
+    return;
+  }
+
+  const status = await api('/api/drive/status').catch(() => ({ configured: false }));
+  if (!status.configured) {
+    let closeSetup;
+    const setupCard = h('div', { class: 'modal-card' }, [
+      h('h2', { text: 'Google Drive is not set up' }),
+      h('p', {
+        class: 'hint',
+        text: 'This server has no Google service account key, so it cannot read your Drive. DRIVE.md in the project has the one-time setup.',
+      }),
+      h('div', { class: 'modal-actions' }, [
+        h('button', { class: 'btn btn-primary', text: 'Close', onclick: () => closeSetup() }),
+      ]),
+    ]);
+    closeSetup = openModal(setupCard);
+    return;
+  }
+
+  const input = h('input', {
+    type: 'text',
+    id: 'drive-folder',
+    placeholder: 'https://drive.google.com/drive/folders/…',
+  });
+  const results = h('div', { class: 'drive-results', id: 'drive-results' });
+  const note = h('p', { class: 'hint', id: 'drive-note' });
+  const importBtn = h('button', {
+    class: 'btn btn-primary', id: 'drive-import', text: 'Import selected', disabled: true,
+  });
+
+  let listed = [];
+  let close;
+
+  const selectedFiles = () => listed.filter((file) => file.checked);
+
+  const refreshButton = () => {
+    const n = selectedFiles().length;
+    importBtn.disabled = n === 0;
+    importBtn.textContent = n ? `Import ${n} photo${n === 1 ? '' : 's'}` : 'Import selected';
+  };
+
+  const lookUp = async () => {
+    const folder = input.value.trim();
+    if (!folder) return;
+    note.textContent = 'Looking…';
+    results.replaceChildren();
+    try {
+      const found = await api('/api/drive/list', { method: 'POST', body: { folder } });
+      listed = found.files.map((file) => ({ ...file, checked: true }));
+
+      if (!listed.length) {
+        note.textContent = found.subfolders.length
+          ? 'No photos directly in that folder — it only holds sub-folders. Open one in Drive and paste its link instead.'
+          : 'That folder has no photos in it.';
+        refreshButton();
+        return;
+      }
+
+      note.textContent = found.subfolders.length
+        ? `${listed.length} photos. ${found.subfolders.length} sub-folder(s) were skipped — import those separately.`
+        : `${listed.length} photos.`;
+
+      results.append(
+        h('label', { class: 'drive-row drive-all' }, [
+          h('input', {
+            type: 'checkbox',
+            checked: true,
+            onchange: (event) => {
+              for (const file of listed) file.checked = event.target.checked;
+              for (const box of results.querySelectorAll('.drive-row:not(.drive-all) input')) {
+                box.checked = event.target.checked;
+              }
+              refreshButton();
+            },
+          }),
+          h('span', { text: 'Select all' }),
+        ]),
+        ...listed.map((file) => h('label', { class: 'drive-row' }, [
+          h('input', {
+            type: 'checkbox',
+            checked: true,
+            onchange: (event) => { file.checked = event.target.checked; refreshButton(); },
+          }),
+          h('span', { class: 'drive-name', text: file.name }),
+          h('span', { class: 'muted small', text: bytes(file.size) }),
+        ])),
+      );
+      refreshButton();
+    } catch (err) {
+      note.textContent = err.message;
+      listed = [];
+      refreshButton();
+    }
+  };
+
+  const card = h('div', { class: 'modal-card drive-card' }, [
+    h('h2', { text: 'Import from Google Drive' }),
+    h('p', {
+      class: 'hint',
+      text: 'Paste the link to a Drive folder. Previews are stored here; the full-resolution files stay in Drive and are fetched only when a client downloads.',
+    }),
+    h('div', { class: 'share-link', style: 'margin-bottom:12px' }, [
+      input,
+      h('button', { class: 'btn btn-sm', text: 'Look up', onclick: lookUp }),
+    ]),
+    note,
+    results,
+    h('div', { class: 'modal-actions' }, [
+      h('button', { class: 'btn', text: 'Cancel', onclick: () => close() }),
+      importBtn,
+    ]),
+  ]);
+
+  importBtn.addEventListener('click', async () => {
+    const files = selectedFiles();
+    close();
+    await importFiles(files);
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); lookUp(); }
+  });
+
+  close = openModal(card);
+  input.focus();
+}
+
 // ---------- sign in ----------
 
 function showLogin() {
@@ -1196,6 +1412,7 @@ $('#copy-share').addEventListener('click', async () => {
 });
 
 $('#pick-files').addEventListener('click', () => $('#file-input').click());
+$('#drive-open').addEventListener('click', openDriveImport);
 $('#file-input').addEventListener('change', (event) => {
   uploadFiles(event.target.files);
   event.target.value = '';

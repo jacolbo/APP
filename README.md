@@ -88,6 +88,16 @@ All optional except the password.
 | `MAX_UPLOAD_MB` | `25` | Per-image upload limit. Larger files are resized in the browser before upload. |
 | `WEBHOOK_URL` | none | Default address for **Send to photographer**. A folder can override it. The server refuses to start if this is not a valid http(s) URL. |
 | `WEBHOOK_SECRET` | none | When set, each webhook carries `X-Signature: sha256=<hmac of the body>` so your endpoint can verify it. |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | none | A Google service account key, as raw JSON or base64. Turns on **Import from Drive**. See [DRIVE.md](DRIVE.md). |
+| `GOOGLE_CLIENT_EMAIL` / `GOOGLE_PRIVATE_KEY` | none | The same credential as two separate values, for panels that will not take a JSON blob. |
+
+### Delivering from Google Drive
+
+If you already export finished photos to Drive, the gallery can import a folder
+and deliver from it rather than making you upload everything twice. Previews are
+stored here so browsing stays fast and PIN-protected; the originals stay in
+Drive and are fetched only when a client downloads. Setup and the trade-offs are
+in **[DRIVE.md](DRIVE.md)**.
 
 ## Your data
 
@@ -269,17 +279,27 @@ multi-tenant service.
 ## Tests
 
 ```bash
-npm test          # 137 API checks + 17 migration checks — starts its own server
-npm run test:ui   # 48 browser checks — needs Playwright
+npm test           # 259 checks — starts its own server
+npm run test:ui    # 51 browser checks — needs Playwright
+npm run test:drive # just the Google Drive suites
 ```
 
-`npm test` covers auth, the folder tree (including the depth cap and the
-cannot-move-a-folder-inside-itself rule), tabs, uploads, publishing, favourites,
-the PIN gate and its use limit, downloads, identifying a client and restoring
-their picks, and the handoff webhook — the last against a real local HTTP
-receiver, not a stub. It asserts directly that a locked tab's image ids
-never appear in a page load. A second suite migrates a real v1 `db.json` and
-checks the old share link, files and picks all survive.
+`npm test` runs four suites:
+
+| Suite | Checks | What it covers |
+| --- | --- | --- |
+| `smoke` | 162 | Auth, the folder tree, tabs, uploads, publishing, favourites, the PIN gate and its use limit, downloads, restoring picks, and the handoff webhook. |
+| `migrate` | 17 | Migrates a real v1 `db.json` and checks the old share link, files and picks all survive. |
+| `drive` | 40 | The Drive client, against a fake Google that verifies our RS256 assertion with a real public key. |
+| `driveflow` | 40 | A whole Drive-backed gallery end to end, including a Drive outage mid-download. |
+
+The webhook is tested against a real local HTTP receiver, not a stub. The suite
+asserts directly that a locked tab's image ids never appear in a page load, and
+that no Drive file id ever reaches the browser.
+
+The Drive suites need no Google account and make no network calls — a local fake
+verifies our signatures with a real key pair, so the hand-rolled auth is proven
+rather than assumed.
 
 Point it at a deployed instance to check a fresh install (it creates and deletes
 a test folder):
