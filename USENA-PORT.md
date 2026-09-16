@@ -24,6 +24,51 @@ assumed.
 
 ---
 
+## What this proposal changes, and what it leaves alone
+
+Nothing here has been applied to Usena. It is a proposal, not a patch — the
+clone was read-only and its working tree is untouched.
+
+**Framework: unchanged.** TypeScript, Express, Drizzle, Neon, React, Radix,
+Tailwind, Vite, Uppy, GCS. Nothing is replaced and nothing is added to
+`package.json`, unless you choose server-side resizing, which would add `sharp`.
+
+**API endpoints: no new routes.** Every change rides existing ones:
+
+| Change | Endpoint | How |
+| --- | --- | --- |
+| Nested sets | `POST/PATCH /api/galleries/:id/sets/:setId` | optional `parentSetId` in the body |
+| Drive-backed photos | `POST /api/galleries/:id/photos/batch` | optional `driveFileId` alongside `storageKey` |
+| Browsing | `GET /api/g/:slug/image/:photoId` | **untouched** — still serves the GCS preview |
+| Download | `POST /api/g/:slug/download/verify-pin` | branch on `driveFileId` after the PIN check |
+| Release gate | `PATCH /api/galleries/:id` | a key inside the existing `settings` JSONB |
+
+**Database: additive only.** Three nullable-or-defaulted columns. No table is
+dropped or renamed, no column changes type, no existing row needs rewriting:
+
+| Table | Column | Effect on existing rows |
+| --- | --- | --- |
+| `gallery_sets` | `parent_set_id varchar NULL` | null — every current set stays top-level |
+| `gallery_sets` | `depth integer NOT NULL DEFAULT 0` | 0 — correct for a flat structure |
+| `gallery_photos` | `drive_file_id text NULL` | null — `storage_key` remains the deliverable |
+
+A gallery that exists today behaves identically after the migration, and the
+release gate defaults to `always`, which is no gate at all.
+
+### Two honest caveats
+
+1. **The React set components will need work.** The wire format can stay a flat
+   array with a `parentSetId` on each row, so the API contract does not break —
+   but whatever renders the set list has to assemble and display a tree. That is
+   not a schema break; it is still real UI work, and it is the largest single
+   piece of this port.
+2. **None of this has been run.** No migration executed, no `tsc`, no
+   `drizzle-kit push` against a real database. The column definitions are
+   written against the schema as cloned, but "compiles and migrates cleanly"
+   is unverified and should be checked before trusting it.
+
+---
+
 ## Gap 1 — sets do not nest
 
 **Verified:** `gallery_sets` has no parent reference (`grep -c parent` over the
