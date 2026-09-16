@@ -9,8 +9,11 @@
   },
   "scripts": {
     "start": "node server.js",
+    "build": "node -e \"console.log('No build step: zero dependencies, no bundler, no transpile.')\"",
     "dev": "node --watch server.js",
-    "test": "node test/smoke.mjs",
-    "test:ui": "node test/ui.mjs"
+    "test": "node test/smoke.mjs && node test/migrate.mjs && node test/drive.mjs && node test/driveflow.mjs && node test/release.mjs",
+    "test:ui": "node test/ui.mjs && node test/driveui.mjs",
+    "test:migrate": "node test/migrate.mjs",
+    "test:drive": "node test/drive.mjs && node test/driveflow.mjs"
   }
 }

@@ -3,3 +3,5 @@ data/
 node_modules/
 *.log
 .DS_Store
+# The launcher writes the studio password here on first run.
+data/studio-password.txt

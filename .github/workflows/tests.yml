@@ -1,0 +1,53 @@
+name: Tests
+
+# The whole security model here is "a PIN-only tab's image ids never appear in
+# a page load". That assertion is worth running on every push, not only when
+# someone remembers to type npm test.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# A newer push makes an in-flight run irrelevant.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API and migration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # No npm install: the app has no dependencies and the suites start their
+      # own server on a temporary data directory.
+      - run: npm test
+
+  browser:
+    name: Browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Playwright is a test-time tool only, never a dependency of the app,
+      # so it is installed here rather than added to package.json.
+      - run: npm install --no-save playwright
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
+        env:
+          SHOTS: ${{ runner.temp }}/shots
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore
+          retention-days: 7
