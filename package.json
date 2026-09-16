@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
+    "build": "node -e \"console.log('No build step: zero dependencies, no bundler, no transpile.')\"",
     "dev": "node --watch server.js",
     "test": "node test/smoke.mjs && node test/migrate.mjs",
     "test:ui": "node test/ui.mjs",

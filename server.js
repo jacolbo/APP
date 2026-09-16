@@ -36,7 +36,9 @@ const config = {
 
 if (!config.adminPassword) {
   if (process.env.NODE_ENV === 'production') {
-    console.error('Refusing to start: set ADMIN_PASSWORD before running in production.');
+    console.error('Refusing to start: ADMIN_PASSWORD is not set.');
+    console.error('This is the studio sign-in password. On a host, add it as an');
+    console.error('environment variable (or secret) named ADMIN_PASSWORD and deploy again.');
     process.exit(1);
   }
   config.adminPassword = 'changeme';
