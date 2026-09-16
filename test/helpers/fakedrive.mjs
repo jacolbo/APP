@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
  * signed wrong, this rejects it exactly as Google would — which is the only
  * way to know the hand-rolled auth is correct.
  */
-export async function startFakeDrive({ files = [], folders = {} } = {}) {
+export async function startFakeDrive({ files = [], folders = {}, folderMeta = {}, sharedRoots = [] } = {}) {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 
   const state = {
@@ -22,6 +22,11 @@ export async function startFakeDrive({ files = [], folders = {} } = {}) {
     // Flipped by a test to prove expiry triggers exactly one refresh.
     tokenLifetime: 3600,
     failNextWith: 0,
+    // Folder id -> whether an "anyone" permission exists. Tests flip these.
+    publicFolders: new Set(),
+    // When true, Google omits `permissions` — the "we cannot tell" case.
+    hidePermissions: false,
+    permissionReads: 0,
   };
 
   const byId = new Map(files.map((f) => [f.id, f]));
@@ -85,6 +90,12 @@ export async function startFakeDrive({ files = [], folders = {} } = {}) {
       state.listCalls += 1;
       const q = url.searchParams.get('q') || '';
       state.lastQuery = q;
+
+      // "what has been shared with this service account"
+      if (q.includes('sharedWithMe')) {
+        return send(200, { files: sharedRoots.map((f) => ({ ...f, mimeType: 'application/vnd.google-apps.folder' })) });
+      }
+
       const match = q.match(/'([^']*)' in parents/);
       const folderId = match ? match[1] : '';
       const contents = folders[folderId];
@@ -95,7 +106,31 @@ export async function startFakeDrive({ files = [], folders = {} } = {}) {
     // ---- files.get (metadata or media) ----
     const fileMatch = url.pathname.match(/^\/drive\/v3\/files\/([^/]+)$/);
     if (req.method === 'GET' && fileMatch) {
-      const file = byId.get(decodeURIComponent(fileMatch[1]));
+      const id = decodeURIComponent(fileMatch[1]);
+      const fields = url.searchParams.get('fields') || '';
+
+      // A folder, asked about its sharing settings.
+      if (fields.includes('permissions')) {
+        state.permissionReads += 1;
+        const known = folders[id] !== undefined || folderMeta[id] !== undefined;
+        if (!known) return send(404, { error: { message: 'File not found' } });
+        const body = {
+          id,
+          name: (folderMeta[id] && folderMeta[id].name) || 'Shared folder',
+          webViewLink: `https://drive.google.com/drive/folders/${id}`,
+        };
+        // Omitting the field entirely is exactly what Google does when the
+        // caller may not read permissions.
+        if (!state.hidePermissions) {
+          body.permissions = [
+            { id: 'owner', type: 'user', role: 'owner' },
+            ...(state.publicFolders.has(id) ? [{ id: 'anyone', type: 'anyone', role: 'reader' }] : []),
+          ];
+        }
+        return send(200, body);
+      }
+
+      const file = byId.get(id);
       if (!file) return send(404, { error: { message: 'File not found' } });
 
       if (url.searchParams.get('alt') === 'media') {
