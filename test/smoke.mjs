@@ -186,6 +186,7 @@ check('a malformed email is refused', badEmail.status === 400, String(badEmail.s
 const identified = await call(`/api/g/${link}/identify`, { method: 'POST', as: 'client', body: { clientSessionId: 'sess-a', clientName: 'Ana', clientEmail: '  Ana@Example.COM ' } });
 check('identity lands on picks already made', identified.status === 200 && identified.data.updated >= 1, JSON.stringify(identified.data));
 const studioView = await call(`/api/folders/${gallery.id}`);
+check('selections carry the file name for copying', studioView.data.selections.some((s) => s.fileName === 'preview-01.png'), JSON.stringify(studioView.data.selections.map((s) => s.fileName)));
 check('the studio sees the email, normalised', studioView.data.selections.some((s) => s.clientEmail === 'ana@example.com'));
 check('restore refuses an email that never picked', (await call(`/api/g/${link}/restore`, { method: 'POST', as: 'client', body: { clientEmail: 'someone@else.test' } })).status === 404);
 const restored = await call(`/api/g/${link}/restore`, { method: 'POST', as: 'client', body: { clientEmail: 'ana@example.com' } });

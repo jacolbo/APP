@@ -499,6 +499,10 @@ function renderSelections() {
   };
 
   $('#picks-count').textContent = `${rows.length} list${rows.length === 1 ? '' : 's'}`;
+  $('#picks-copy-all').onclick = () => copyText(
+    pickedNames(state.selections.filter((entry) => entry.selected !== false)),
+    'All picked file names',
+  );
   $('#picks-sort').value = state.picksSort;
 
   $('#selections-summary').replaceChildren(
@@ -531,6 +535,12 @@ function renderSelections() {
               renderGrid();
               renderSelections();
             },
+          }),
+          h('button', {
+            class: 'btn btn-sm',
+            text: 'Copy names',
+            title: 'Comma-separated file names, ready to paste into Lightroom',
+            onclick: () => copyText(pickedNames(list.picks), `${list.picks.length} file names`),
           }),
           h('a', {
             class: 'btn btn-sm',
@@ -677,6 +687,47 @@ function openImageEditor(image, images) {
     h('button', { class: 'icon-btn close-x', text: '✕', 'aria-label': 'Close', onclick: () => close() }),
   ]);
   close = openModal(card);
+}
+
+/**
+ * The picked files as a bare, comma-separated list of names without
+ * extensions — "_MG_1613, _MG_1621, …" — which is what a filename filter in
+ * Lightroom or Capture One expects pasted into it.
+ *
+ * Order is the order they were picked, not sorted: that is the order the
+ * client worked through them, and re-sorting loses it. Repeated names are
+ * dropped, since a filter gains nothing from seeing one twice.
+ */
+function pickedNames(selections) {
+  const seen = new Set();
+  const names = [];
+  for (const selection of [...selections].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const bare = String(selection.fileName || '').replace(/\.[^.]+$/, '').trim();
+    const name = bare || selection.imageId;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  return names.join(', ');
+}
+
+async function copyText(value, what) {
+  if (!value) {
+    toast('Nothing to copy', true);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(value);
+    toast(`${what} copied`);
+  } catch {
+    // Clipboard access can be refused; show it so it can be copied by hand.
+    await askText({
+      title: what,
+      label: 'Select all, then copy',
+      value,
+      confirmText: 'Done',
+    });
+  }
 }
 
 /** An On/Off row: what it controls on the left, its state on the right. */

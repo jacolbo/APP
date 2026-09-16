@@ -43,7 +43,10 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
   args: ['--no-sandbox'],
 });
-const studio = await browser.newContext({ viewport: { width: 1320, height: 950 } });
+const studio = await browser.newContext({
+  viewport: { width: 1320, height: 950 },
+  permissions: ['clipboard-read', 'clipboard-write'],
+});
 const page = await studio.newPage();
 const errors = [];
 page.on('pageerror', (err) => errors.push(`studio: ${err.message}`));
@@ -179,6 +182,14 @@ await page.click('#root-cards .card:first-child');
 await page.waitForSelector('#folder-view:not([hidden])');
 const whoPicked = await page.textContent('#selections-summary');
 check('the studio shows the name and email, not a session id', whoPicked.includes('Ana') && whoPicked.includes('ana@example.com'), whoPicked.slice(0, 120));
+// The whole point of this button is the exact shape of what lands on the
+// clipboard, so read it back rather than trusting the call site.
+await page.click('#picks-copy-all');
+const copied = (await page.evaluate(() => navigator.clipboard.readText())).trim();
+check('copied names carry no file extension', !/\.(png|jpe?g)/i.test(copied), copied);
+check('copied names are comma separated', /^[^,]+(, [^,]+)*$/.test(copied), copied);
+check('copied names are the picked files', copied.split(', ').every((n) => /^shot-\d+$/.test(n)), copied);
+
 const statsText = await page.textContent('#folder-stats');
 check('the studio sees views and downloads', /Views/i.test(statsText) && /Downloads/i.test(statsText), statsText.slice(0, 80));
 
