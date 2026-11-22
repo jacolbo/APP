@@ -4,6 +4,8 @@ services:
   jm-selects:
     build: .
     image: jm-selects:latest
+    # Always build locally; never try to download "jm-selects" from Docker Hub.
+    pull_policy: build
     container_name: jm-selects
     restart: unless-stopped
     ports:
