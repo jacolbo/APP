@@ -1,32 +1,28 @@
-# JM Selects – deploy with the UGOS Pro Docker app (Project page) or `docker compose up -d`.
+# JM Selects - deploy with the UGOS Pro Docker app (Project > Create > Import).
 # All settings live in the .env file next to this one.
 services:
   jm-selects:
     build: .
     image: jm-selects:latest
-    # Always build locally; never try to download "jm-selects" from Docker Hub.
-    pull_policy: build
     container_name: jm-selects
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8080}:8080"
     environment:
-      STAFF_PIN: ${STAFF_PIN:?Set STAFF_PIN in .env}
+      STAFF_PIN: ${STAFF_PIN}
       PACKAGE_SIZES: ${PACKAGE_SIZES:-10,20,30,50}
       EXTRA_IMAGE_PRICE: ${EXTRA_IMAGE_PRICE:-250}
       BACKUP_SUFFIX: ${BACKUP_SUFFIX:-backup}
-      PROJECTS_LABEL: ${PROJECTS_PATH:?Set PROJECTS_PATH in .env}
-      WIFI_SSID: ${WIFI_SSID:-}
-      WIFI_PASSWORD: ${WIFI_PASSWORD:-}
-      PUBLIC_URL: ${PUBLIC_URL:-}
-      PUID: ${PUID:-}
-      PGID: ${PGID:-}
+      PROJECTS_LABEL: ${PROJECTS_PATH}
+      WIFI_SSID: ${WIFI_SSID}
+      WIFI_PASSWORD: ${WIFI_PASSWORD}
+      PUBLIC_URL: ${PUBLIC_URL}
       TZ: ${TZ:-Africa/Johannesburg}
     volumes:
       # Photos: READ-ONLY. The app can never change, move or delete anything here.
-      - "${PHOTOS_PATH:?Set PHOTOS_PATH in .env}:/photos:ro"
-      # RAW project folders: the ONLY place the app may write photo files (copies).
-      - "${PROJECTS_PATH:?Set PROJECTS_PATH in .env}:/projects"
+      - "${PHOTOS_PATH}:/photos:ro"
+      # RAW project folders: the only place the app writes photo files (copies).
+      - "${PROJECTS_PATH}:/projects"
       # App data: ratings, selections and the thumbnail cache.
       - "${DATA_PATH:-./data}:/data"
     read_only: true
@@ -34,13 +30,3 @@ services:
       - /tmp
     security_opt:
       - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      # Only used by the start-up script to fix the data folder's owner and switch to a
-      # normal user; the app itself runs without them.
-      - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
-      - SETUID
-      - SETGID
