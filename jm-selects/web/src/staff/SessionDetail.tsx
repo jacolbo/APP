@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, copyText, imgUrl, rememberClient, type ClientData, type Session } from '../api';
+import { api, copyText, imgUrl, rememberClient, type ClientData, type RawStatus, type Session } from '../api';
 import { HeartIcon } from '../icons';
 import { navigate } from '../nav';
 import { fmtTime } from './SessionList';
 
-type Detail = ClientData & { session: Session };
+type Detail = ClientData & { session: Session; raws: RawStatus };
 
 export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: unknown) => void }) {
   const [d, setD] = useState<Detail | null>(null);
@@ -25,11 +25,13 @@ export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: 
     [id, onAuthLost],
   );
 
+  // Poll faster while RAWs are being copied so the progress bar moves.
+  const copying = d?.raws.state === 'queued' || d?.raws.state === 'running';
   useEffect(() => {
     void load();
-    const t = setInterval(load, 5000);
+    const t = setInterval(load, copying ? 1500 : 5000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, copying]);
 
   if (error && !d) return <p className="error">{error}</p>;
   if (!d) return <p className="muted">Loading…</p>;
@@ -100,6 +102,7 @@ export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: 
           </p>
         </div>
         <CopyList id={id} />
+        <RawCard id={id} raws={d.raws} onChange={load} />
         <div className="card">
           <h2>Manage</h2>
           <div className="btn-col">
@@ -255,6 +258,90 @@ function CopyList({ id }: { id: number }) {
         Copy list ({count})
       </button>
       {copied && <p className="muted small">{copied}</p>}
+    </div>
+  );
+}
+
+const mb = (n = 0) => (n / 1024 / 1024).toFixed(n > 10 * 1024 * 1024 ? 0 : 1);
+
+function RawCard({ id, raws, onChange }: { id: number; raws: RawStatus; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [showMissing, setShowMissing] = useState(false);
+  if (!raws.enabled) {
+    return (
+      <div className="card">
+        <h2>RAW project folder</h2>
+        <p className="muted small">Off: no projects folder is set up. Add PROJECTS_PATH to the .env file and redeploy (see README).</p>
+      </div>
+    );
+  }
+  const st = raws.state;
+  const active = st === 'queued' || st === 'running';
+  const pct = raws.totalBytes ? Math.round(((raws.doneBytes ?? 0) / raws.totalBytes) * 100) : active ? 0 : 100;
+  const where = raws.destination ? `${raws.projectsLabel.replace(/\/+$/, '')}/${raws.destination}` : null;
+  const missing = raws.missing ?? [];
+  const problems = raws.problems ?? [];
+
+  return (
+    <div className="card raw-card">
+      <h2>RAW project folder</h2>
+      {st === null && <p className="muted small">RAWs are copied automatically when the client taps “I’m done”.</p>}
+      {st === 'queued' && <p>Waiting to start…</p>}
+      {st === 'running' && (
+        <p>
+          Copying RAWs… {raws.doneFiles ?? 0} of {raws.totalFiles ?? 0} ({mb(raws.doneBytes)} of {mb(raws.totalBytes)} MB)
+        </p>
+      )}
+      {(st === 'done' || st === 'done_with_issues') && (
+        <p>
+          <span className={`chip ${st === 'done' ? 'done' : 'warn'}`}>{st === 'done' ? 'Done' : 'Done – check below'}</span>{' '}
+          {raws.copied} copied{raws.alreadyThere ? `, ${raws.alreadyThere} already there` : ''}.
+        </p>
+      )}
+      {(st === 'failed' || st === 'interrupted') && <p className="error">{raws.message}</p>}
+      {(active || st === 'done' || st === 'done_with_issues') && (
+        <div className="progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+          <div style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      {where && (
+        <p className="muted small">
+          Folder: <span className="mono">{where}</span>
+        </p>
+      )}
+      {missing.length > 0 && (
+        <div className="raw-missing">
+          <button className="link-btn" onClick={() => setShowMissing(!showMissing)}>
+            {missing.length} selected photo{missing.length === 1 ? '' : 's'} with no RAW found {showMissing ? '▴' : '▾'}
+          </button>
+          {showMissing && <ul className="mono small">{missing.map((m) => <li key={m}>{m}</li>)}</ul>}
+        </div>
+      )}
+      {problems.length > 0 && (
+        <ul className="error small">
+          {problems.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+      )}
+      {(raws.multipleMatches?.length ?? 0) > 0 && (
+        <p className="muted small">
+          {raws.multipleMatches!.length} photo(s) had more than one RAW with the same name; the one next to the JPEG was used.
+        </p>
+      )}
+      <button
+        className="btn ghost"
+        disabled={busy || active}
+        onClick={async () => {
+          setBusy(true);
+          await api(`/api/staff/sessions/${id}/raws`, { method: 'POST' }).catch((e) => alert(e.message));
+          setBusy(false);
+          onChange();
+        }}
+      >
+        {st === null ? 'Copy RAWs now' : 'Re-copy RAWs'}
+      </button>
+      <p className="muted small">Adds newly selected photos. Nothing is overwritten or deleted.</p>
     </div>
   );
 }

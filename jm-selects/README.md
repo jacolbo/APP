@@ -7,6 +7,9 @@ with a tablet, browses their photos, hearts and star-rates their favourites, and
 - Runs on the studio NAS in Docker. Works on studio Wi-Fi with **no internet**.
 - The photos folder is mounted **read-only**: the app cannot change, move or delete photos.
 - Shows **JPEGs only**. RAW files have the same base name, so the list matches them in Capture One.
+- When the client taps **I’m done**, the matching RAW files are **copied** into a project folder
+  (`<Projects>/<year>/<week>/<client name>/`) ready for Capture One. Originals are never moved,
+  renamed or deleted, and nothing is ever overwritten.
 
 ---
 
@@ -50,10 +53,39 @@ Only week folders whose name **ends in “backup”** are offered when starting 
 | --- | --- |
 | `STAFF_PIN` | A 4–12 digit PIN for staff. Not `1234`/`0000`. |
 | `PHOTOS_PATH` | The photos folder **as the NAS sees it**, e.g. `/volume1/Photos`. In the UGOS Pro **Files** app, open the folder’s properties/details to see its full path. |
+| `PROJECTS_PATH` | The folder the RAW copies go into, **as the NAS sees it**, e.g. `/volume1/Projects/JM Selects`. Create it from the studio PC first (see **Folder permissions** below). |
 | `APP_PORT` | The port tablets will use. `8080` is fine unless something else on the NAS already uses it. |
 | `PACKAGE_SIZES` | Your package sizes, e.g. `10,20,30,50`. They become quick buttons; staff can also type any number. |
 
 Leave the rest as they are.
+
+## Folder permissions (read this once)
+
+The app runs as an ordinary NAS user, never as administrator ("root"). It needs to be able
+to write to two folders: its own **data** folder and the **projects** folder. If Docker has to
+create a missing folder itself, Docker makes it owned by the administrator, and the app can’t
+write there. That is what causes **“unable to open database file”**.
+
+The simple fix is to **create both folders yourself from the studio PC** (File Explorer, on
+the mapped NAS drive) *before* deploying:
+
+1. Inside the `jm-selects` folder on the NAS, create a folder called **`data`**.
+2. Create the projects folder, e.g. a folder **`JM Selects`** inside your **`Projects`** share.
+   Use that folder’s NAS path for `PROJECTS_PATH`.
+
+Folders you create from the PC belong to your NAS user. When the app starts, it checks who
+owns the projects folder and runs as that same user. That means:
+- it can write its copies there, and
+- the copied RAWs belong to you, so Capture One on the PC can open and work with them.
+
+The app also hands its own `data` folder to that user automatically, so an old
+administrator-owned `data` folder is fixed on the next start.
+
+**If the projects folder still isn’t writable** (the staff screen says “The app cannot
+write to the projects folder”, and the container log says the same): in the UGOS Pro
+**Files** app, right-click the projects folder → permissions, and give your user (or
+“Everyone”) **read & write**. Then restart the project. *I couldn’t see the UGOS Pro
+permission screens, so the wording there may differ.*
 
 ## 4. Deploy in the UGOS Pro Docker app
 
@@ -103,6 +135,23 @@ shortcut that opens in Chrome rather than as a full-screen app. On iPad it opens
   them when it reconnects.
 - **I’m done** locks the selection.
 
+**RAW project folder (automatic)**
+- When the client taps **I’m done**, the app looks for the RAW file that matches each
+  **hearted** photo (same file name, any RAW type: .CR3, .CR2, .NEF, .ARW, .RAF, .DNG …,
+  upper or lower case), in the client folder **and its subfolders**.
+- It **copies** them in the background to `<projects folder>/<year>/<week>/<client name>/`,
+  e.g. `Projects/JM Selects/2026/Week 47/Naidoo Family/` (the word “backup” is left off the week).
+- The session screen shows progress, then **Done**. Photos with **no matching RAW** are
+  listed so you can check them. The session list shows “RAWs copied” / “RAWs: check”.
+- Each copy is checked (its size must match the original) before it appears under its real name.
+- If the client changes their picks after you **unlock**, press **Re-copy RAWs**. It adds
+  the new picks and skips files that are already there. Photos that were *unselected* keep
+  their copy in the project folder; delete those yourself if you don’t want them.
+- A file that already exists in the project folder is **never overwritten**. If one with the
+  same name but a different size is there, it’s left alone and listed as a problem.
+- If two RAWs in the client folder have the same name (e.g. one in a subfolder), the one
+  next to the JPEG is used.
+
 **Afterwards (staff, on the PC)**
 1. Open the session.
 2. **Copy list for Capture One**: choose **♥ Hearted** or **★ Stars** (minimum rating),
@@ -116,11 +165,21 @@ New JPEGs copied into the client’s folder appear within about 5 seconds (or pr
 
 ---
 
-## 7. Updating later
+## 7. Updating later (redeploying)
 
-1. Replace the files in the `jm-selects` folder on the NAS with the new version.
-   **Keep your `.env` file and the `data` folder.**
-2. In Docker → Project → `jm-selects`, choose **Rebuild** (or Stop, then build/start again).
+1. Download the new `jm-selects.zip` and extract it on the studio PC.
+2. Copy its files over the `jm-selects` folder on the NAS.
+   **Keep your `.env` file and the `data` folder**; don’t replace or delete them.
+3. Open your `.env` and compare it with the new `.env.example`. Add any new settings.
+   *(This update adds `PROJECTS_PATH`; the app won’t start without it.)*
+4. **If `docker-compose.yml` changed** (it did in this update): on this NAS the compose file
+   had to be imported manually, so UGOS keeps its own copy. Open
+   **Docker → Project → jm-selects**, edit/import the compose file, and replace its contents
+   with the new `docker-compose.yml`.
+5. **Docker → Project → jm-selects → Rebuild.** This builds the new version and restarts it.
+   It needs internet for a few minutes.
+6. Open the app and check it works. In the container log you should see
+   `RAW project copies: /projects (…your PROJECTS_PATH…)` with no “NOT writable” warning.
 
 Your sessions and selections are in the `data` folder, so they carry over.
 
@@ -134,7 +193,11 @@ and are rebuilt automatically). Back up `jm-selects.sqlite` if you want to keep 
 
 | Problem | Fix |
 | --- | --- |
-| Container stops straight away | Check the project log. “STAFF_PIN must be set” means fix `.env`. “Photos folder not found” means `PHOTOS_PATH` is wrong. |
+| Container stops straight away | Check the project log. “STAFF_PIN must be set” means fix `.env`. “Photos folder not found” means `PHOTOS_PATH` is wrong. “Set PROJECTS_PATH” means add it to `.env`. |
+| “unable to open database file” / “cannot write to its data folder” | See **Folder permissions**: create the `data` folder from the PC, then Rebuild. |
+| RAW copy says “cannot write to the projects folder” | See **Folder permissions**, then press **Re-copy RAWs**. |
+| “Stopped when the app restarted” | The NAS or app restarted mid-copy. Press **Re-copy RAWs**; finished files are skipped. |
+| A photo is listed with “no RAW found” | Check its RAW exists in the client folder with exactly the same name (only the extension may differ). |
 | Tablet can’t open the page | Same Wi-Fi as the NAS? Right port? Try the address on the PC first. |
 | No year folders listed | `PHOTOS_PATH` points at the wrong level; it must be the folder that holds `2025`, `2026` … |
 | A week isn’t listed | Its folder name must end in “backup”. |
@@ -145,8 +208,13 @@ and are rebuilt automatically). Back up `jm-selects.sqlite` if you want to keep 
 
 ## Security, plainly
 
-- Photos are mounted read-only. The app only reads JPEGs inside the photos folder; every
+- Photos are mounted read-only. The app only reads files inside the photos folder; every
   path is checked against that folder (including links pointing elsewhere).
+- The projects folder is the only place the app writes photo files. It only ever *creates*
+  new files there: no overwriting, moving, renaming or deleting. Every folder it creates is
+  checked to be inside the projects folder (client names like `../..` are made safe).
+- The app runs as a normal NAS user with no special privileges. A tiny start-up step runs as
+  administrator only to fix the owner of the app’s own `data` folder, then switches user.
 - Staff area needs the PIN. Wrong PINs are rate-limited. The sign-in cookie lasts 12 hours;
   **Lock** signs out.
 - A client link (`/c/…`) contains a long random code that can’t be guessed. It shows only that
@@ -165,7 +233,8 @@ and are rebuilt automatically). Back up `jm-selects.sqlite` if you want to keep 
 TypeScript throughout: Express + better-sqlite3 + sharp on the server, React (Vite) front end.
 
 ```
-server/        API, path safety, JPEG listing, image cache, PIN auth, SQLite
+server/        API, path safety, JPEG listing, image cache, PIN auth, SQLite, RAW copier
+docker/        start-up script (picks the NAS user, fixes data folder owner)
 web/           React app (client screen, staff screens), PWA manifest + icons
 test/          unit + API tests (vitest), browser end-to-end run (Playwright)
 scripts/       sample-folder generator, icon generator
@@ -177,7 +246,7 @@ Run locally (Windows PowerShell, Node 22 installed):
 npm install
 npm run build
 node scripts/make-sample.mjs sample-photos 60
-$env:STAFF_PIN="482916"; $env:PHOTOS_ROOT="$PWD\sample-photos"; $env:DATA_DIR="$PWD\data"; npm start
+$env:STAFF_PIN="482916"; $env:PHOTOS_ROOT="$PWD\sample-photos"; $env:DATA_DIR="$PWD\data"; $env:PROJECTS_ROOT="$PWD\projects"; npm start
 ```
 
 Then open <http://localhost:8080>. To point at the real photos read-only, set
@@ -187,6 +256,6 @@ Windows can’t enforce read-only for a local run the way Docker’s `:ro` does.
 Tests:
 
 ```bash
-npm test                     # 72 unit + API tests (path safety, JPEG filter, copy list, API)
+npm test                     # 113 unit + API tests (path safety, JPEG filter, copy list, RAW matching, writes only inside projects, API)
 BASE=http://localhost:8080 PIN=482916 node test/e2e.mjs   # browser run; needs Playwright installed
 ```

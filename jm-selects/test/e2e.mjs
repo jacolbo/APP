@@ -127,7 +127,7 @@ await p.goto(BASE + '/staff');
 await p.getByLabel('Staff PIN').fill(PIN);
 await p.keyboard.press('Enter');
 await p.getByText('Naidoo Family').first().click();
-await p.getByText(/^Done /).waitFor();
+await p.locator('.section-head .chip', { hasText: /^Done / }).waitFor();
 const ta = p.locator('.copy-card textarea');
 await p.waitForFunction(() => document.querySelector('.copy-card textarea')?.value.length > 0);
 const list = await ta.inputValue();
@@ -141,6 +141,19 @@ await p.waitForFunction(() => document.querySelector('.copy-card textarea')?.val
 await shot(p, '09-staff-session');
 step('staff copy list (hearted / 4★+ with extension), copy button');
 
+// RAW project copies (only when the server has a projects folder).
+if (process.env.EXPECT_RAWS) {
+  const card = p.locator('.raw-card');
+  await card.getByText(/copied/).waitFor({ timeout: 30000 });
+  const text = await card.innerText();
+  assert.match(text, new RegExp(`${process.env.EXPECT_RAWS} copied`), text);
+  assert.match(text, /2026\/Week 47\/Naidoo Family/);
+  await card.getByText(/with no RAW found/).click();
+  await card.getByText('JM_0006.jpg').waitFor();
+  await shot(p, '11-raw-card');
+  step('RAWs copied after "I\'m done", missing RAW listed');
+}
+
 const [dl] = await Promise.all([p.waitForEvent('download'), p.getByText('Export CSV').click()]);
 const csv = await (await import('node:fs/promises')).readFile(await dl.path(), 'utf8');
 assert.match(csv, /"JM_0003.jpg","yes","5"/);
@@ -151,6 +164,15 @@ await p.getByText('In progress').first().waitFor();
 await t.reload();
 await t.getByRole('button', { name: 'I’m done' }).waitFor();
 step('staff unlock re-opens the client tablet');
+
+if (process.env.EXPECT_RAWS) {
+  await t.locator('.tile .heart').nth(14).click(); // JM_0015
+  await t.getByText('All changes saved').waitFor();
+  await p.getByRole('button', { name: 'Re-copy RAWs' }).click();
+  await p.locator('.raw-card').getByText(/1 copied, \d+ already there/).waitFor({ timeout: 30000 });
+  await shot(p, '12-raw-recopy');
+  step('Re-copy RAWs adds only the new pick');
+}
 
 await p.getByText('‹ All sessions').click();
 await shot(p, '10-staff-list');

@@ -50,7 +50,17 @@ export class Store {
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (session_id, file_name)
       );
+      CREATE TABLE IF NOT EXISTS raw_jobs (
+        session_id INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        state TEXT NOT NULL,
+        report TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
+    // A job that was running when the app stopped can't still be running.
+    this.db
+      .prepare(`UPDATE raw_jobs SET state = 'interrupted' WHERE state IN ('queued', 'running')`)
+      .run();
   }
 
   createSession(clientName: string, folder: string, packageSize: number): SessionRow {
@@ -133,6 +143,27 @@ export class Store {
       this.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
     })();
     return { file_name: fileName, selected, stars, updated_at: now };
+  }
+
+  getRawJob(sessionId: number): { state: string; report: string; updated_at: number } | undefined {
+    return this.db.prepare('SELECT state, report, updated_at FROM raw_jobs WHERE session_id = ?').get(sessionId) as
+      | { state: string; report: string; updated_at: number }
+      | undefined;
+  }
+
+  saveRawJob(sessionId: number, state: string, report: unknown): void {
+    if (!this.getSession(sessionId)) return; // session deleted meanwhile
+    this.db
+      .prepare(
+        `INSERT INTO raw_jobs (session_id, state, report, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET state = excluded.state, report = excluded.report, updated_at = excluded.updated_at`,
+      )
+      .run(sessionId, state, JSON.stringify(report), Date.now());
+  }
+
+  rawJobStates(): Map<number, string> {
+    const rows = this.db.prepare('SELECT session_id, state FROM raw_jobs').all() as { session_id: number; state: string }[];
+    return new Map(rows.map((r) => [r.session_id, r.state]));
   }
 
   close(): void {

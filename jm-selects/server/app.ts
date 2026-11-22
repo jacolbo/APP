@@ -17,6 +17,7 @@ import { Store, type SessionRow } from './db.js';
 import { ImageCache, type Variant } from './images.js';
 import { PathError, cleanFileName, cleanRelPath, resolveInside } from './paths.js';
 import { FolderCache, browse, isJpeg } from './photos.js';
+import { RawCopier } from './rawjobs.js';
 
 export interface AppDeps {
   config: Config;
@@ -24,6 +25,7 @@ export interface AppDeps {
   images: ImageCache;
   folders: FolderCache;
   limiter: PinLimiter;
+  raws: RawCopier;
 }
 
 class HttpError extends Error {
@@ -43,6 +45,9 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
   const folders = overrides.folders ?? new FolderCache();
   const limiter = overrides.limiter ?? new PinLimiter();
   const secret = loadSecret(config.dataDir);
+  const raws =
+    overrides.raws ??
+    new RawCopier(store, { photosRoot: config.photosRoot, projectsRoot: config.projectsRoot, backupSuffix: config.backupSuffix });
 
   const app = express();
   app.disable('x-powered-by');
@@ -107,6 +112,15 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     updatedAt: s.updated_at,
     doneAt: s.done_at,
   });
+
+  const rawStatus = (s: SessionRow) => {
+    const r = raws.status(s.id);
+    return {
+      enabled: raws.enabled(),
+      projectsLabel: config.projectsLabel,
+      ...(r ?? { state: null }),
+    };
+  };
 
   const clientPayload = async (s: SessionRow, force = false) => {
     const photos = await photosFor(s, force);
@@ -173,10 +187,34 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
   );
 
   staff.get('/sessions', (_req, res) => {
+    const states = store.rawJobStates();
     res.json(
-      store.listSessions().map((s) => ({ ...sessionJson(s), selectedCount: s.selected_count, ratedCount: s.rated_count })),
+      store.listSessions().map((s) => ({
+        ...sessionJson(s),
+        selectedCount: s.selected_count,
+        ratedCount: s.rated_count,
+        rawState: raws.status(s.id)?.state ?? states.get(s.id) ?? null,
+      })),
     );
   });
+
+  staff.get(
+    '/sessions/:id/raws',
+    wrap((req, res) => {
+      res.json(rawStatus(sessionById(req)));
+    }),
+  );
+
+  /** Copy (or top up) the RAWs for this session's hearted photos into the projects folder. */
+  staff.post(
+    '/sessions/:id/raws',
+    wrap((req, res) => {
+      const s = sessionById(req);
+      if (!raws.enabled()) throw new HttpError(400, 'No projects folder is set up (PROJECTS_PATH in .env).');
+      raws.enqueue(s.id);
+      res.status(202).json(rawStatus(s));
+    }),
+  );
 
   staff.post(
     '/sessions',
@@ -201,7 +239,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     '/sessions/:id',
     wrap(async (req, res) => {
       const s = sessionById(req);
-      res.json({ session: sessionJson(s), ...(await clientPayload(s)) });
+      res.json({ session: sessionJson(s), ...(await clientPayload(s)), raws: rawStatus(s) });
     }),
   );
 
@@ -330,7 +368,10 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     '/api/c/:token/done',
     wrap((req, res) => {
       const s = sessionByToken(req);
-      store.setStatus(s.id, 'done');
+      if (s.status !== 'done') {
+        store.setStatus(s.id, 'done');
+        if (raws.enabled()) raws.enqueue(s.id); // copy RAWs in the background
+      }
       res.json({ status: 'done' });
     }),
   );
@@ -377,5 +418,5 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     res.status(500).json({ error: 'Something went wrong' });
   });
 
-  return { app, store, images, folders };
+  return { app, store, images, folders, raws };
 }

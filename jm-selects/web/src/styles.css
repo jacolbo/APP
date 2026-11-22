@@ -847,3 +847,34 @@ a.btn {
 .seg button {
   white-space: nowrap;
 }
+
+/* ---------- RAW copy card ---------- */
+.chip.warn {
+  background: #f6e6d4;
+  border-color: #c98b4a;
+}
+.progress {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--cream-2);
+  overflow: hidden;
+}
+.progress > div {
+  height: 100%;
+  background: var(--gold);
+  transition: width 0.4s;
+}
+.mono {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+.raw-card ul {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 180px;
+  overflow: auto;
+}
+.raw-card p {
+  margin: 0;
+}

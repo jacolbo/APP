@@ -44,6 +44,27 @@ export interface Session {
   doneAt: number | null;
   selectedCount?: number;
   ratedCount?: number;
+  rawState?: RawState | null;
+}
+
+export type RawState = 'queued' | 'running' | 'done' | 'done_with_issues' | 'failed' | 'interrupted';
+export interface RawStatus {
+  enabled: boolean;
+  projectsLabel: string;
+  state: RawState | null;
+  destination?: string | null;
+  totalFiles?: number;
+  doneFiles?: number;
+  copied?: number;
+  alreadyThere?: number;
+  totalBytes?: number;
+  doneBytes?: number;
+  missing?: string[];
+  problems?: string[];
+  multipleMatches?: string[];
+  startedAt?: number | null;
+  finishedAt?: number | null;
+  message?: string | null;
 }
 
 export const imgUrl = (token: string, variant: 'thumb' | 'preview', p: Photo) =>

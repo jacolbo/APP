@@ -51,6 +51,17 @@ export function SessionList({ onAuthLost }: { onAuthLost: (e: unknown) => void }
                   <span>
                     <strong>{s.selectedCount}</strong> of {s.packageSize} selected
                   </span>
+                  {s.rawState && (
+                    <span className={`chip ${s.rawState === 'done' ? 'done' : s.rawState === 'done_with_issues' || s.rawState === 'failed' || s.rawState === 'interrupted' ? 'warn' : 'progress'}`}>
+                      {s.rawState === 'running' || s.rawState === 'queued'
+                        ? 'Copying RAWs…'
+                        : s.rawState === 'done'
+                          ? 'RAWs copied'
+                          : s.rawState === 'done_with_issues'
+                            ? 'RAWs: check'
+                            : 'RAW copy failed'}
+                    </span>
+                  )}
                   <span className={`chip ${s.status === 'done' ? 'done' : 'progress'}`}>
                     {s.status === 'done' ? 'Done' : 'In progress'}
                   </span>

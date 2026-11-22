@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 export interface Config {
@@ -8,6 +9,10 @@ export interface Config {
   packageSizes: number[];
   backupSuffix: string;
   webDir: string;
+  /** Writable folder for RAW project copies (null = feature off). */
+  projectsRoot: string | null;
+  /** How the projects folder is shown to staff (the NAS path). */
+  projectsLabel: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -30,6 +35,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     staffPin,
     packageSizes,
     backupSuffix: (env.BACKUP_SUFFIX ?? 'backup').toLowerCase(),
+    projectsRoot: env.PROJECTS_ROOT
+      ? path.resolve(env.PROJECTS_ROOT)
+      : fs.existsSync('/projects')
+        ? '/projects'
+        : null,
+    projectsLabel: (env.PROJECTS_LABEL ?? '').trim() || 'Projects',
     webDir: path.resolve(env.WEB_DIR ?? path.join(import.meta.dirname, '..', 'web')),
   };
 }
