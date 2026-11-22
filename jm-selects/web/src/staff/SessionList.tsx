@@ -1,0 +1,66 @@
+import { useEffect, useState } from 'react';
+import { api, type Session } from '../api';
+import { navigate } from '../nav';
+
+export const fmtTime = (t: number) =>
+  new Date(t).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+export function SessionList({ onAuthLost }: { onAuthLost: (e: unknown) => void }) {
+  const [sessions, setSessions] = useState<Session[] | null>(null);
+  const [show, setShow] = useState<'all' | 'in_progress' | 'done'>('all');
+
+  useEffect(() => {
+    const load = () => api<Session[]>('/api/staff/sessions').then(setSessions).catch(onAuthLost);
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [onAuthLost]);
+
+  if (!sessions) return <p className="muted">Loading…</p>;
+  const list = sessions.filter((s) => show === 'all' || s.status === show);
+
+  return (
+    <section>
+      <div className="section-head">
+        <h1>Sessions</h1>
+        <div className="seg">
+          {(['all', 'in_progress', 'done'] as const).map((k) => (
+            <button key={k} className={show === k ? 'on' : ''} onClick={() => setShow(k)}>
+              {k === 'all' ? 'All' : k === 'done' ? 'Done' : 'In progress'}
+            </button>
+          ))}
+        </div>
+      </div>
+      {list.length === 0 ? (
+        <div className="empty-card">
+          <p>No sessions yet.</p>
+          <button className="btn gold" onClick={() => navigate('/staff/new')}>
+            Start a session
+          </button>
+        </div>
+      ) : (
+        <ul className="session-list">
+          {list.map((s) => (
+            <li key={s.id}>
+              <button className="session-row" onClick={() => navigate(`/staff/sessions/${s.id}`)}>
+                <div>
+                  <div className="session-name">{s.clientName}</div>
+                  <div className="muted small">{s.folder}</div>
+                </div>
+                <div className="session-meta">
+                  <span>
+                    <strong>{s.selectedCount}</strong> of {s.packageSize} selected
+                  </span>
+                  <span className={`chip ${s.status === 'done' ? 'done' : 'progress'}`}>
+                    {s.status === 'done' ? 'Done' : 'In progress'}
+                  </span>
+                  <span className="muted small">{fmtTime(s.updatedAt)}</span>
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}

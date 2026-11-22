@@ -1,0 +1,27 @@
+# JM Selects – deploy with the UGOS Pro Docker app (Project page) or `docker compose up -d`.
+# All settings live in the .env file next to this one.
+services:
+  jm-selects:
+    build: .
+    image: jm-selects:latest
+    container_name: jm-selects
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      STAFF_PIN: ${STAFF_PIN:?Set STAFF_PIN in .env}
+      PACKAGE_SIZES: ${PACKAGE_SIZES:-10,20,30,50}
+      BACKUP_SUFFIX: ${BACKUP_SUFFIX:-backup}
+      TZ: ${TZ:-Africa/Johannesburg}
+    volumes:
+      # Photos: READ-ONLY. The app can never change, move or delete anything here.
+      - "${PHOTOS_PATH:?Set PHOTOS_PATH in .env}:/photos:ro"
+      # App data: ratings, selections and the thumbnail cache.
+      - "${DATA_PATH:-./data}:/data"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
