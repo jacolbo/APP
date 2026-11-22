@@ -55,6 +55,7 @@ Only week folders whose name **ends in “backup”** are offered when starting 
 | `PHOTOS_PATH` | The photos folder **as the NAS sees it**, e.g. `/volume1/Photos`. In the UGOS Pro **Files** app, open the folder’s properties/details to see its full path. |
 | `PROJECTS_PATH` | The folder the RAW copies go into, **as the NAS sees it**, e.g. `/volume1/Projects/JM Selects`. Create it from the studio PC first (see **Folder permissions** below). |
 | `APP_PORT` | The port tablets will use. `8080` is fine unless something else on the NAS already uses it. |
+| `EXTRA_IMAGE_PRICE` | Price per extra picture beyond the package, in whole rand (default `250`). Staff can change it per session. |
 | `PACKAGE_SIZES` | Your package sizes, e.g. `10,20,30,50`. They become quick buttons; staff can also type any number. |
 
 Leave the rest as they are.
@@ -66,20 +67,21 @@ to write to two folders: its own **data** folder and the **projects** folder. If
 create a missing folder itself, Docker makes it owned by the administrator, and the app can’t
 write there. That is what causes **“unable to open database file”**.
 
-The simple fix is to **create both folders yourself from the studio PC** (File Explorer, on
-the mapped NAS drive) *before* deploying:
+The simple fix is to **create both folders yourself from your computer** (Finder on the Mac,
+or File Explorer on a PC, on the mounted NAS share) *before* deploying:
 
 1. Inside the `jm-selects` folder on the NAS, create a folder called **`data`**.
 2. Create the projects folder, e.g. a folder **`JM Selects`** inside your **`Projects`** share.
    Use that folder’s NAS path for `PROJECTS_PATH`.
 
-Folders you create from the PC belong to your NAS user. When the app starts, it checks who
+Folders you create from your computer belong to your NAS user. When the app starts, it checks who
 owns the projects folder and runs as that same user. That means:
 - it can write its copies there, and
 - the copied RAWs belong to you, so Capture One on the PC can open and work with them.
 
 The app also hands its own `data` folder to that user automatically, so an old
-administrator-owned `data` folder is fixed on the next start.
+administrator-owned `data` folder is fixed on the next start. (If you already ran
+`chmod 777` on `/Volumes/docker/jm-selects/data` from the Mac, that's fine. Leave it.)
 
 **If the projects folder still isn’t writable** (the staff screen says “The app cannot
 write to the projects folder”, and the container log says the same): in the UGOS Pro
@@ -121,7 +123,8 @@ shortcut that opens in Chrome rather than as a full-screen app. On iPad it opens
 **Start a session (staff)**
 1. Open the app and enter the staff PIN.
 2. **New session** → year → week backup → **Start session** next to the client’s folder.
-3. Check the client name, choose the package size, then **Start session**.
+3. Check the client name, choose the package size, check the **extra picture price**
+   (pre-filled from `EXTRA_IMAGE_PRICE`, change it for this client if needed), then **Start session**.
 4. Tap **Hand this tablet to the client**. This signs staff out on the tablet and opens
    the client view. The client sees only their own folder.
 
@@ -130,7 +133,10 @@ shortcut that opens in Chrome rather than as a full-screen app. On iPad it opens
   (tap the same star again to clear it).
 - Filters: All photos / Selected / by stars.
 - **Compare**: tap two photos to see them side by side.
-- The counter shows “12 of 20 selected”. Going over shows a gentle note but is allowed.
+- The top of the screen always shows, live: **“23 selected · 20 included · 3 extra · R750”**.
+- There is no limit. The first time a client goes past their package they see one gentle
+  note: *“You’ve chosen more than your package includes – extra pictures are R250 each.”*
+  (using that session's price). It doesn't appear again on that tablet for that session.
 - Every tap saves straight away. If the Wi-Fi drops, the tablet keeps the taps and sends
   them when it reconnects.
 - **I’m done** locks the selection.
@@ -156,8 +162,11 @@ shortcut that opens in Chrome rather than as a full-screen app. On iPad it opens
 1. Open the session.
 2. **Copy list for Capture One**: choose **♥ Hearted** or **★ Stars** (minimum rating),
    with or without the `.jpg` extension, then **Copy list** and paste into Capture One.
-3. **Export CSV** gives a spreadsheet of every photo with selected/stars.
-4. **Unlock for changes** if the client wants to change something.
+3. The session screen shows **selected, included, extra and the extra total**. Use
+   **Change package / price** if needed.
+4. **Export CSV** gives a spreadsheet: a summary at the top (client, selected, included,
+   extra pictures, price each, extra total), then every photo with selected/stars.
+5. **Unlock for changes** if the client wants to change something.
    **Reset selections** clears hearts/stars. **Delete session** removes the session.
    Neither touches the photos.
 
@@ -165,23 +174,41 @@ New JPEGs copied into the client’s folder appear within about 5 seconds (or pr
 
 ---
 
-## 7. Updating later (redeploying)
+## 7. Updating later (redeploying) – from the Mac
 
-1. Download the new `jm-selects.zip` and extract it on the studio PC.
-2. Copy its files over the `jm-selects` folder on the NAS.
-   **Keep your `.env` file and the `data` folder**; don’t replace or delete them.
-3. Open your `.env` and compare it with the new `.env.example`. Add any new settings.
-   *(This update adds `PROJECTS_PATH`; the app won’t start without it.)*
-4. **If `docker-compose.yml` changed** (it did in this update): on this NAS the compose file
-   had to be imported manually, so UGOS keeps its own copy. Open
-   **Docker → Project → jm-selects**, edit/import the compose file, and replace its contents
-   with the new `docker-compose.yml`.
-5. **Docker → Project → jm-selects → Rebuild.** This builds the new version and restarts it.
-   It needs internet for a few minutes.
-6. Open the app and check it works. In the container log you should see
-   `RAW project copies: /projects (…your PROJECTS_PATH…)` with no “NOT writable” warning.
+Your NAS `docker` share is mounted on the Mac at `/Volumes/docker`, and the app lives in
+`/Volumes/docker/jm-selects`. **Your `.env` file and `data` folder stay as they are.**
 
-Your sessions and selections are in the `data` folder, so they carry over.
+1. **Download** the new `jm-selects.zip` from Google Drive and double-click it. You get a
+   `jm-selects` folder in **Downloads**.
+2. **Copy the new files over the old ones.** Don't drag the folder onto the NAS in Finder:
+   Finder would *replace the whole folder* and delete your `.env` and `data`. Instead, open
+   **Terminal** and paste:
+   ```bash
+   rsync -av --exclude '.env' --exclude 'data/' ~/Downloads/jm-selects/ /Volumes/docker/jm-selects/
+   ```
+   This only adds and updates app files. It never deletes anything, and never touches `.env` or `data`.
+3. **Add any new settings to `.env`.** Open it with:
+   ```bash
+   open -e /Volumes/docker/jm-selects/.env
+   ```
+   Compare it with `.env.example` in the same folder and add the lines you're missing. This
+   update needs:
+   ```
+   PROJECTS_PATH=/volume1/…your projects folder…
+   EXTRA_IMAGE_PRICE=250
+   ```
+   Save and close TextEdit.
+4. **Re-import the compose file.** On this NAS the compose file was imported by hand, so UGOS
+   keeps its own copy. In the UGOS Pro **Docker** app: **Project → jm-selects** → edit the
+   compose file and replace its contents with the new
+   `/Volumes/docker/jm-selects/docker-compose.yml`. If your UGOS version has no edit option,
+   delete the *project* (this doesn't delete your files or `data`), then
+   **Project → Create → Import docker-compose.yml**, pick the same folder, and import again.
+5. **Rebuild:** **Project → jm-selects → Rebuild.** It needs internet for a few minutes.
+6. **Check the log** (Project → jm-selects → container → Log). You should see
+   `RAW project copies: /projects (…)` and no “NOT writable” warning. Then open the app on the
+   tablet; your sessions are still there.
 
 ## 8. Backups
 
@@ -231,11 +258,15 @@ and are rebuilt automatically). Back up `jm-selects.sqlite` if you want to keep 
 ## For developers
 
 TypeScript throughout: Express + better-sqlite3 + sharp on the server, React (Vite) front end.
+The look follows jepsonmyles.co.za (same colours, Bodoni Moda + Jost, frosted glass panels).
+The fonts are bundled in `web/public/fonts` under the SIL Open Font Licence (licence files
+included), so the app needs no internet.
 
 ```
 server/        API, path safety, JPEG listing, image cache, PIN auth, SQLite, RAW copier
 docker/        start-up script (picks the NAS user, fixes data folder owner)
-web/           React app (client screen, staff screens), PWA manifest + icons
+web/           React app (client screen, staff screens), PWA manifest, icons, bundled fonts
+shared/        extra-picture pricing used by both server and screens
 test/          unit + API tests (vitest), browser end-to-end run (Playwright)
 scripts/       sample-folder generator, icon generator
 ```
@@ -256,6 +287,6 @@ Windows can’t enforce read-only for a local run the way Docker’s `:ro` does.
 Tests:
 
 ```bash
-npm test                     # 113 unit + API tests (path safety, JPEG filter, copy list, RAW matching, writes only inside projects, API)
+npm test                     # 139 unit + API tests (incl. extra count/total, path safety, JPEG filter, copy list, RAW matching, writes only inside projects, API)
 BASE=http://localhost:8080 PIN=482916 node test/e2e.mjs   # browser run; needs Playwright installed
 ```

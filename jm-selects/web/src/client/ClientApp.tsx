@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Brand } from '../brand';
+import { extrasFor, formatRand } from '../../../shared/pricing';
 import { imgUrl, rememberClient, type Photo, type Pick } from '../api';
 import { HeartIcon } from '../icons';
 import { navigate } from '../nav';
@@ -18,6 +20,7 @@ export function ClientApp({ token }: { token: string }) {
   const [comparing, setComparing] = useState<[string, string] | null>(null);
   const [confirmDone, setConfirmDone] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [extraNotice, setExtraNotice] = useState(false);
 
   useEffect(() => rememberClient(token), [token]);
   useEffect(() => {
@@ -49,7 +52,7 @@ export function ClientApp({ token }: { token: string }) {
   if (error) {
     return (
       <div className="center-screen">
-        <div className="brand-mark">Jepson Myles</div>
+        <Brand large />
         <p className="muted">{error}</p>
         <button className="link-btn" onClick={() => navigate('/staff')}>
           Studio sign-in
@@ -57,11 +60,27 @@ export function ClientApp({ token }: { token: string }) {
       </div>
     );
   }
-  if (!data) return <div className="center-screen"><div className="brand-mark">Jepson Myles</div><p className="muted">Loading your photos…</p></div>;
+  if (!data) return <div className="center-screen"><Brand large /><p className="muted">Loading your photos…</p></div>;
 
-  const toggle = (name: string) => !locked && change(name, { selected: !pickOf(name).selected });
+  const extras = extrasFor(selectedCount, data.packageSize, data.extraPrice);
+  const noticeKey = `jm-selects-extra-notice-${token}`;
+  const toggle = (name: string) => {
+    if (locked) return;
+    const selecting = !pickOf(name).selected;
+    change(name, { selected: selecting });
+    // The first time the client goes past their package, tell them once, gently.
+    if (selecting && selectedCount + 1 > data.packageSize) {
+      let seen = false;
+      try {
+        seen = localStorage.getItem(noticeKey) === '1';
+        localStorage.setItem(noticeKey, '1');
+      } catch {
+        /* private mode: show it anyway */
+      }
+      if (!seen) setExtraNotice(true);
+    }
+  };
   const rate = (name: string, stars: number) => !locked && change(name, { stars });
-  const over = selectedCount - data.packageSize;
 
   const onTileTap = (p: Photo) => {
     if (comparePick) {
@@ -81,19 +100,10 @@ export function ClientApp({ token }: { token: string }) {
     <div className="client">
       <header className="client-top">
         <div className="client-title">
-          <div className="brand-mark small">Jepson Myles</div>
-          <div className="client-name">{data.clientName}</div>
+          <Brand />
+          <h1 className="client-name">{data.clientName}</h1>
         </div>
-        <div className="counter" aria-live="polite">
-          <div className="counter-main">
-            <strong>{selectedCount}</strong> of {data.packageSize} selected
-          </div>
-          {over > 0 && (
-            <div className="counter-note">
-              {over} more than your package — we’ll go through options for extra images with you.
-            </div>
-          )}
-        </div>
+        <Summary extras={extras} />
         <div className="client-actions">
           <button
             className={`btn ghost ${comparePick ? 'active' : ''}`}
@@ -211,15 +221,34 @@ export function ClientApp({ token }: { token: string }) {
         />
       )}
 
+      {extraNotice && (
+        <div className="modal-back" onClick={() => setExtraNotice(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="extra-title">
+            <span className="eyebrow">A small note</span>
+            <h2 id="extra-title">More favourites than your package</h2>
+            <p className="extra-msg">
+              You’ve chosen more than your package includes – extra pictures are {formatRand(data.extraPrice)} each.
+            </p>
+            <p className="muted">Keep choosing freely. Your running total is always shown at the top.</p>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setExtraNotice(false)} autoFocus>
+                Continue choosing
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {confirmDone && (
         <div className="modal-back" onClick={() => setConfirmDone(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
             <h2>Finished choosing?</h2>
-            <p>
-              You’ve selected <strong>{selectedCount}</strong> photo{selectedCount === 1 ? '' : 's'}
-              {` (your package includes ${data.packageSize}).`}
-            </p>
-            {over > 0 && <p className="muted">The {over} extra can be added on — we’ll talk you through it.</p>}
+            <Summary extras={extras} />
+            {extras.extra > 0 && (
+              <p className="muted">
+                {extras.extra} extra picture{extras.extra === 1 ? '' : 's'} at {formatRand(extras.price)} each, {formatRand(extras.total)} in total.
+              </p>
+            )}
             {selectedCount === 0 && <p className="muted">You haven’t selected any photos yet.</p>}
             <p className="muted">Once you confirm, the studio will take it from here.</p>
             <div className="modal-actions">
@@ -239,6 +268,30 @@ export function ClientApp({ token }: { token: string }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** "23 selected · 20 included · 3 extra · R750", updated live. */
+function Summary({ extras }: { extras: ReturnType<typeof extrasFor> }) {
+  const over = extras.extra > 0;
+  return (
+    <div className={`summary ${over ? 'over' : ''}`} aria-live="polite" aria-atomic="true">
+      <span>
+        <b>{extras.selected}</b> selected
+      </span>
+      <span className="dot"> · </span>
+      <span>
+        <b>{extras.included}</b> included
+      </span>
+      <span className="dot"> · </span>
+      <span className="extra">
+        <b>{extras.extra}</b> extra
+      </span>
+      <span className="dot"> · </span>
+      <span className="extra">
+        <b>{formatRand(extras.total)}</b>
+      </span>
     </div>
   );
 }

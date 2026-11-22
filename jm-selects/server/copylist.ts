@@ -1,4 +1,5 @@
 import { naturalCompare } from './photos.js';
+import { formatRand, type Extras } from '../shared/pricing.js';
 
 export interface PickLike {
   file_name: string;
@@ -49,9 +50,24 @@ function csvCell(value: string): string {
   return `"${safe.replace(/"/g, '""')}"`;
 }
 
-export function buildCsv(fileNames: string[], picks: PickLike[]): string {
+/**
+ * CSV export: a short summary (client, included, extra, extra total) then one row per photo.
+ */
+export function buildCsv(fileNames: string[], picks: PickLike[], summary?: Extras & { clientName: string }): string {
   const byName = new Map(picks.map((p) => [p.file_name, p]));
-  const lines = ['"File name","Selected","Stars"'];
+  const lines: string[] = [];
+  if (summary) {
+    lines.push(
+      `"Client",${csvCell(summary.clientName)}`,
+      `"Selected","${summary.selected}"`,
+      `"Included in package","${summary.included}"`,
+      `"Extra pictures","${summary.extra}"`,
+      `"Price per extra picture","${formatRand(summary.price)}"`,
+      `"Extra total","${formatRand(summary.total)}"`,
+      '',
+    );
+  }
+  lines.push('"File name","Selected","Stars"');
   for (const name of [...fileNames].sort(naturalCompare)) {
     const p = byName.get(name);
     lines.push([csvCell(name), p?.selected ? '"yes"' : '"no"', `"${p?.stars ?? 0}"`].join(','));

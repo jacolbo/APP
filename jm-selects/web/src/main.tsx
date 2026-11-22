@@ -1,4 +1,5 @@
 import { StrictMode, useEffect, useState } from 'react';
+import { Brand } from './brand';
 import { createRoot } from 'react-dom/client';
 import { rememberedClient } from './api';
 import { navigate } from './nav';
@@ -28,7 +29,7 @@ function Router() {
   if (path.startsWith('/staff')) return <StaffApp path={path} />;
   return (
     <div className="center-screen">
-      <div className="brand-mark">Jepson Myles</div>
+      <Brand large />
       <button className="link-btn" onClick={() => navigate('/staff')}>
         Studio sign-in
       </button>

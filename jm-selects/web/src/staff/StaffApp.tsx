@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Brand } from '../brand';
 import { ApiError, api } from '../api';
 import { navigate } from '../nav';
 import { NewSession } from './NewSession';
@@ -31,8 +32,7 @@ export function StaffApp({ path }: { path: string }) {
     <div className="staff">
       <header className="staff-top">
         <button className="brand-link" onClick={() => navigate('/staff')}>
-          <span className="brand-mark small">Jepson Myles</span>
-          <span className="staff-label">JM Selects · Studio</span>
+          <Brand sub="JM Selects · Studio" />
         </button>
         <div className="staff-actions">
           <button className="btn gold" onClick={() => navigate('/staff/new')}>
@@ -80,7 +80,7 @@ function PinScreen({ onOk }: { onOk: () => void }) {
 
   return (
     <div className="center-screen pin-screen">
-      <div className="brand-mark">Jepson Myles</div>
+      <Brand large sub="JM Selects" />
       <p className="muted">Studio staff · enter PIN</p>
       <form
         onSubmit={(e) => {

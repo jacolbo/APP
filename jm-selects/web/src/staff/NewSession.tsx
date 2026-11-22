@@ -15,9 +15,15 @@ export function NewSession({ onAuthLost }: { onAuthLost: (e: unknown) => void })
   const [error, setError] = useState('');
   const [chosen, setChosen] = useState<Entry | null>(null);
   const [packages, setPackages] = useState<number[]>([]);
+  const [defaultPrice, setDefaultPrice] = useState<number>(250);
 
   useEffect(() => {
-    api<{ packageSizes: number[] }>('/api/config').then((c) => setPackages(c.packageSizes)).catch(() => {});
+    api<{ packageSizes: number[]; extraImagePrice: number }>('/api/config')
+      .then((c) => {
+        setPackages(c.packageSizes);
+        setDefaultPrice(c.extraImagePrice);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -37,7 +43,7 @@ export function NewSession({ onAuthLost }: { onAuthLost: (e: unknown) => void })
   const crumbs = rel ? rel.split('/') : [];
   const heading = depth === 0 ? 'Choose the year' : depth === 1 ? 'Choose the week (backup folders)' : 'Choose the client folder';
 
-  if (chosen) return <StartForm folder={chosen} packages={packages} onBack={() => setChosen(null)} />;
+  if (chosen) return <StartForm folder={chosen} packages={packages} defaultPrice={defaultPrice} onBack={() => setChosen(null)} />;
 
   return (
     <section>
@@ -80,8 +86,19 @@ export function NewSession({ onAuthLost }: { onAuthLost: (e: unknown) => void })
   );
 }
 
-function StartForm({ folder, packages, onBack }: { folder: Entry; packages: number[]; onBack: () => void }) {
+function StartForm({
+  folder,
+  packages,
+  defaultPrice,
+  onBack,
+}: {
+  folder: Entry;
+  packages: number[];
+  defaultPrice: number;
+  onBack: () => void;
+}) {
   const [name, setName] = useState(folder.name);
+  const [price, setPrice] = useState(String(defaultPrice));
   const [size, setSize] = useState<string>(packages[0] ? String(packages[0]) : '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -92,7 +109,7 @@ function StartForm({ folder, packages, onBack }: { folder: Entry; packages: numb
     try {
       const s = await api<Session>('/api/staff/sessions', {
         method: 'POST',
-        json: { clientName: name, packageSize: Number(size), folder: folder.path },
+        json: { clientName: name, packageSize: Number(size), folder: folder.path, extraPrice: price },
       });
       navigate(`/staff/sessions/${s.id}`, true);
     } catch (e) {
@@ -103,6 +120,7 @@ function StartForm({ folder, packages, onBack }: { folder: Entry; packages: numb
 
   return (
     <section className="form-card">
+      <span className="eyebrow">New session</span>
       <h1>Start session</h1>
       <p className="muted small">{folder.path}</p>
       <label>
@@ -125,12 +143,24 @@ function StartForm({ folder, packages, onBack }: { folder: Entry; packages: numb
           aria-label="Other package size"
         />
       </div>
+      <label>
+        Extra pictures (rand each)
+        <span className="money-input">
+          <span>R</span>
+          <input
+            inputMode="numeric"
+            value={price}
+            onChange={(e) => setPrice(e.target.value.replace(/[^\d]/g, '').slice(0, 6))}
+            aria-label="Price per extra picture in rand"
+          />
+        </span>
+      </label>
       {error && <p className="error">{error}</p>}
       <div className="modal-actions">
         <button className="btn ghost" onClick={onBack}>
           Back
         </button>
-        <button className="btn gold" disabled={busy || !name.trim() || !Number(size)} onClick={start}>
+        <button className="btn gold" disabled={busy || !name.trim() || !Number(size) || price === ''} onClick={start}>
           Start session
         </button>
       </div>

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, copyText, imgUrl, rememberClient, type ClientData, type RawStatus, type Session } from '../api';
+import { formatRand, type Extras } from '../../../shared/pricing';
 import { HeartIcon } from '../icons';
 import { navigate } from '../nav';
 import { fmtTime } from './SessionList';
 
-type Detail = ClientData & { session: Session; raws: RawStatus };
+type Detail = ClientData & { session: Session; raws: RawStatus; extras: Extras };
 
 export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: unknown) => void }) {
   const [d, setD] = useState<Detail | null>(null);
@@ -61,6 +62,7 @@ export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: 
       </button>
       <div className="section-head">
         <div>
+          <span className="eyebrow">Session</span>
           <h1>{s.clientName}</h1>
           <div className="muted small">{s.folder}</div>
         </div>
@@ -69,10 +71,22 @@ export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: 
         </span>
       </div>
 
-      <div className="stat-row">
+      <div className="stat-row pane">
         <div className="stat">
           <strong>{selected}</strong>
-          <span>selected of {s.packageSize}</span>
+          <span>selected</span>
+        </div>
+        <div className="stat">
+          <strong>{d.extras.included}</strong>
+          <span>included</span>
+        </div>
+        <div className={`stat ${d.extras.extra ? 'gold' : ''}`}>
+          <strong>{d.extras.extra}</strong>
+          <span>extra × {formatRand(d.extras.price)}</span>
+        </div>
+        <div className={`stat ${d.extras.extra ? 'gold' : ''}`}>
+          <strong>{formatRand(d.extras.total)}</strong>
+          <span>extra total</span>
         </div>
         <div className="stat">
           <strong>{rated}</strong>
@@ -172,10 +186,11 @@ export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: 
 function PackageEdit({ session, onSaved }: { session: Session; onSaved: () => void }) {
   const [editing, setEditing] = useState(false);
   const [v, setV] = useState(String(session.packageSize));
+  const [price, setPrice] = useState(String(session.extraPrice));
   if (!editing)
     return (
       <button className="link-btn" onClick={() => setEditing(true)}>
-        Change package
+        Change package / price
       </button>
     );
   return (
@@ -183,14 +198,22 @@ function PackageEdit({ session, onSaved }: { session: Session; onSaved: () => vo
       className="inline-form"
       onSubmit={async (e) => {
         e.preventDefault();
-        await api(`/api/staff/sessions/${session.id}`, { method: 'PATCH', json: { packageSize: Number(v) } }).catch((er) =>
-          alert(er.message),
-        );
+        await api(`/api/staff/sessions/${session.id}`, {
+          method: 'PATCH',
+          json: { packageSize: Number(v), extraPrice: price },
+        }).catch((er) => alert(er.message));
         setEditing(false);
         onSaved();
       }}
     >
-      <input inputMode="numeric" value={v} onChange={(e) => setV(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+      <label className="small">
+        Included
+        <input inputMode="numeric" value={v} onChange={(e) => setV(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+      </label>
+      <label className="small">
+        Extra each (R)
+        <input inputMode="numeric" value={price} onChange={(e) => setPrice(e.target.value.replace(/\D/g, '').slice(0, 6))} />
+      </label>
       <button className="btn gold small">Save</button>
     </form>
   );

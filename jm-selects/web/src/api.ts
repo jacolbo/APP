@@ -1,3 +1,6 @@
+import type { Extras } from '../../shared/pricing';
+export type { Extras };
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -28,6 +31,7 @@ export interface Pick {
 export interface ClientData {
   clientName: string;
   packageSize: number;
+  extraPrice: number;
   status: 'in_progress' | 'done';
   photos: Photo[];
   picks: Record<string, Pick>;
@@ -38,6 +42,7 @@ export interface Session {
   clientName: string;
   folder: string;
   packageSize: number;
+  extraPrice: number;
   status: 'in_progress' | 'done';
   createdAt: number;
   updatedAt: number;
@@ -45,6 +50,7 @@ export interface Session {
   selectedCount?: number;
   ratedCount?: number;
   rawState?: RawState | null;
+  extras?: Extras;
 }
 
 export type RawState = 'queued' | 'running' | 'done' | 'done_with_issues' | 'failed' | 'interrupted';

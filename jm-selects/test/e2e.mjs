@@ -17,6 +17,13 @@ const watch = (page) => {
 };
 const shot = async (page, name) => SHOTS && page.screenshot({ path: `${SHOTS}/${name}.png` });
 const step = (s) => console.log('✓', s);
+/** Wait until the client summary reads e.g. "12 selected · 10 included · 2 extra · R500". */
+const summaryIs = (page, text) =>
+  page.waitForFunction(
+    (want) => document.querySelector('.client-top .summary')?.textContent.replace(/\s+/g, ' ').trim() === want,
+    text,
+    { timeout: 10000 },
+  );
 
 const tablet = await browser.newContext({ ...devices['iPad Pro 11 landscape'] });
 const t = await tablet.newPage();
@@ -36,6 +43,8 @@ assert.equal(await t.getByText('Week 47', { exact: true }).count(), 0, 'plain we
 await shot(t, '01-browse');
 await t.locator('li', { hasText: 'Naidoo Family' }).getByRole('button', { name: 'Start session' }).click();
 await t.getByRole('button', { name: '10', exact: true }).click();
+assert.equal(await t.getByLabel('Price per extra picture in rand').inputValue(), process.env.PRICE ?? '250');
+await shot(t, '01b-start-form');
 await t.getByRole('button', { name: 'Start session' }).click();
 await t.getByRole('heading', { name: 'Naidoo Family' }).waitFor();
 step('browse year → backup week → client, start session (package 10)');
@@ -44,7 +53,7 @@ await shot(t, '02-session');
 await t.getByRole('button', { name: 'Hand this tablet to the client' }).click();
 await t.waitForURL(/\/c\//);
 const clientUrl = t.url();
-await t.getByText('0 of 10 selected').waitFor();
+await summaryIs(t, '0 selected · 10 included · 0 extra · R0');
 await t.locator('.tile img').first().waitFor();
 assert.equal(await t.locator('.tile').count(), 60);
 step('handoff → client grid shows 60 JPEGs, no RAWs');
@@ -54,7 +63,7 @@ await shot(t, '03-client-grid');
 const hearts = t.locator('.tile .heart');
 for (const i of [0, 2, 5]) await hearts.nth(i).click();
 await t.locator('.tile').nth(2).getByRole('button', { name: '5 stars' }).click();
-await t.getByText('3 of 10 selected').waitFor();
+await summaryIs(t, '3 selected · 10 included · 0 extra · R0');
 await t.getByText('All changes saved').waitFor();
 step('heart + stars on tiles');
 
@@ -74,11 +83,11 @@ await t.locator('.viewer-bottom').getByRole('button', { name: '4 stars' }).click
 await t.waitForTimeout(800);
 await shot(t, '04-viewer');
 await t.getByRole('button', { name: 'Close' }).click();
-await t.getByText('4 of 10 selected').waitFor();
+await summaryIs(t, '4 selected · 10 included · 0 extra · R0');
 step('full-screen viewer, swipe, heart, stars');
 
 await t.reload();
-await t.getByText('4 of 10 selected').waitFor();
+await summaryIs(t, '4 selected · 10 included · 0 extra · R0');
 step('selections survive a reload');
 
 await t.getByRole('button', { name: /Selected/ }).click();
@@ -97,11 +106,27 @@ await shot(t, '05-compare');
 await t.getByRole('button', { name: 'Close' }).click();
 step('side-by-side compare');
 
-for (let i = 6; i < 14; i++) await hearts.nth(i).click();
-await t.getByText('12 of 10 selected').waitFor();
-await t.getByText(/2 more than your package/).waitFor();
+let notices = 0;
+for (let i = 6; i < 14; i++) {
+  await hearts.nth(i).click();
+  if (await t.locator('.modal').isVisible()) {
+    notices++;
+    const msg = await t.locator('.extra-msg').innerText();
+    assert.equal(msg, 'You’ve chosen more than your package includes – extra pictures are R250 each.');
+    await shot(t, '06a-extra-notice');
+    await t.getByRole('button', { name: 'Continue choosing' }).click();
+  }
+}
+assert.equal(notices, 1, 'extra notice shows exactly once');
+await summaryIs(t, '12 selected · 10 included · 2 extra · R500');
+await hearts.nth(13).click(); // unheart: total goes down live
+await summaryIs(t, '11 selected · 10 included · 1 extra · R250');
+await hearts.nth(13).click();
+await summaryIs(t, '12 selected · 10 included · 2 extra · R500');
+assert.equal(await t.locator('.modal').count(), 0, 'notice does not repeat');
+await t.getByText('All changes saved').waitFor();
 await shot(t, '06-over-package');
-step('over-package note (not blocked)');
+step('extra pictures: not capped, one gentle notice, live total R500');
 
 await t.getByRole('button', { name: 'I’m done' }).click();
 await shot(t, '07-confirm-done');
@@ -128,6 +153,8 @@ await p.getByLabel('Staff PIN').fill(PIN);
 await p.keyboard.press('Enter');
 await p.getByText('Naidoo Family').first().click();
 await p.locator('.section-head .chip', { hasText: /^Done / }).waitFor();
+const stats = (await p.locator('.stat-row').innerText()).replace(/\s+/g, ' ');
+assert.match(stats, /12 selected 10 included 2 extra × R250 R500 extra total/i, stats);
 const ta = p.locator('.copy-card textarea');
 await p.waitForFunction(() => document.querySelector('.copy-card textarea')?.value.length > 0);
 const list = await ta.inputValue();
@@ -157,7 +184,9 @@ if (process.env.EXPECT_RAWS) {
 const [dl] = await Promise.all([p.waitForEvent('download'), p.getByText('Export CSV').click()]);
 const csv = await (await import('node:fs/promises')).readFile(await dl.path(), 'utf8');
 assert.match(csv, /"JM_0003.jpg","yes","5"/);
-step('CSV export');
+assert.match(csv, /"Extra pictures","2"/);
+assert.match(csv, /"Extra total","R500"/);
+step('CSV export with included / extra / total');
 
 await p.getByRole('button', { name: 'Unlock for changes' }).click();
 await p.getByText('In progress').first().waitFor();

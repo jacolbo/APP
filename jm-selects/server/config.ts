@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { parsePrice } from '../shared/pricing.js';
 
 export interface Config {
   port: number;
@@ -7,6 +8,8 @@ export interface Config {
   dataDir: string;
   staffPin: string;
   packageSizes: number[];
+  /** Default price per extra picture, whole rand. */
+  extraImagePrice: number;
   backupSuffix: string;
   webDir: string;
   /** Writable folder for RAW project copies (null = feature off). */
@@ -28,7 +31,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     .map((s) => Number.parseInt(s.trim(), 10))
     .filter((n) => Number.isInteger(n) && n > 0 && n < 10000);
 
+  const extraImagePrice = parsePrice(env.EXTRA_IMAGE_PRICE ?? '250');
+  if (extraImagePrice === null) {
+    throw new Error('EXTRA_IMAGE_PRICE must be a whole rand amount, e.g. 250.');
+  }
+
   return {
+    extraImagePrice,
     port: Number.parseInt(env.PORT ?? '8080', 10),
     photosRoot: path.resolve(env.PHOTOS_ROOT ?? '/photos'),
     dataDir: path.resolve(env.DATA_DIR ?? '/data'),

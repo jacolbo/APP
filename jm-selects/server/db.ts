@@ -10,6 +10,7 @@ export interface SessionRow {
   client_name: string;
   folder: string;
   package_size: number;
+  extra_price: number;
   status: Status;
   created_at: number;
   updated_at: number;
@@ -57,21 +58,26 @@ export class Store {
         updated_at INTEGER NOT NULL
       );
     `);
+    // Older databases: add the per-session extra picture price.
+    const cols = this.db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'extra_price')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN extra_price INTEGER NOT NULL DEFAULT 250');
+    }
     // A job that was running when the app stopped can't still be running.
     this.db
       .prepare(`UPDATE raw_jobs SET state = 'interrupted' WHERE state IN ('queued', 'running')`)
       .run();
   }
 
-  createSession(clientName: string, folder: string, packageSize: number): SessionRow {
+  createSession(clientName: string, folder: string, packageSize: number, extraPrice: number): SessionRow {
     const now = Date.now();
     const token = crypto.randomBytes(18).toString('base64url');
     const info = this.db
       .prepare(
-        `INSERT INTO sessions (token, client_name, folder, package_size, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'in_progress', ?, ?)`,
+        `INSERT INTO sessions (token, client_name, folder, package_size, extra_price, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'in_progress', ?, ?)`,
       )
-      .run(token, clientName, folder, packageSize, now, now);
+      .run(token, clientName, folder, packageSize, extraPrice, now, now);
     return this.getSession(Number(info.lastInsertRowid))!;
   }
 
@@ -94,12 +100,18 @@ export class Store {
       .all() as (SessionRow & { selected_count: number; rated_count: number })[];
   }
 
-  updateSession(id: number, fields: { client_name?: string; package_size?: number }): void {
+  updateSession(id: number, fields: { client_name?: string; package_size?: number; extra_price?: number }): void {
     const s = this.getSession(id);
     if (!s) return;
     this.db
-      .prepare('UPDATE sessions SET client_name = ?, package_size = ?, updated_at = ? WHERE id = ?')
-      .run(fields.client_name ?? s.client_name, fields.package_size ?? s.package_size, Date.now(), id);
+      .prepare('UPDATE sessions SET client_name = ?, package_size = ?, extra_price = ?, updated_at = ? WHERE id = ?')
+      .run(
+        fields.client_name ?? s.client_name,
+        fields.package_size ?? s.package_size,
+        fields.extra_price ?? s.extra_price,
+        Date.now(),
+        id,
+      );
   }
 
   setStatus(id: number, status: Status): void {

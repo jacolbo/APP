@@ -11,6 +11,7 @@ services:
     environment:
       STAFF_PIN: ${STAFF_PIN:?Set STAFF_PIN in .env}
       PACKAGE_SIZES: ${PACKAGE_SIZES:-10,20,30,50}
+      EXTRA_IMAGE_PRICE: ${EXTRA_IMAGE_PRICE:-250}
       BACKUP_SUFFIX: ${BACKUP_SUFFIX:-backup}
       PROJECTS_LABEL: ${PROJECTS_PATH:?Set PROJECTS_PATH in .env}
       PUID: ${PUID:-}

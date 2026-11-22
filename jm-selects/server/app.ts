@@ -13,6 +13,7 @@ import {
 } from './auth.js';
 import type { Config } from './config.js';
 import { buildCopyList, buildCsv } from './copylist.js';
+import { extrasFor, parsePrice } from '../shared/pricing.js';
 import { Store, type SessionRow } from './db.js';
 import { ImageCache, type Variant } from './images.js';
 import { PathError, cleanFileName, cleanRelPath, resolveInside } from './paths.js';
@@ -107,6 +108,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     clientName: s.client_name,
     folder: s.folder,
     packageSize: s.package_size,
+    extraPrice: s.extra_price,
     status: s.status,
     createdAt: s.created_at,
     updatedAt: s.updated_at,
@@ -128,6 +130,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     return {
       clientName: s.client_name,
       packageSize: s.package_size,
+      extraPrice: s.extra_price,
       status: s.status,
       photos: photos.map((p) => ({ name: p.name, v: Math.round(p.mtimeMs).toString(36) })),
       picks: Object.fromEntries(picks.map((p) => [p.file_name, { selected: !!p.selected, stars: p.stars }])),
@@ -140,7 +143,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
   });
 
   app.get('/api/config', (_req, res) => {
-    res.json({ packageSizes: config.packageSizes });
+    res.json({ packageSizes: config.packageSizes, extraImagePrice: config.extraImagePrice });
   });
 
   // ---------- staff auth ----------
@@ -193,6 +196,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
         ...sessionJson(s),
         selectedCount: s.selected_count,
         ratedCount: s.rated_count,
+        extras: extrasFor(s.selected_count, s.package_size, s.extra_price),
         rawState: raws.status(s.id)?.state ?? states.get(s.id) ?? null,
       })),
     );
@@ -229,7 +233,9 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
       if (folder.split('/').length < 2) throw new HttpError(400, 'Choose a client folder');
       const abs = resolveInside(config.photosRoot, folder);
       if (!fs.statSync(abs).isDirectory()) throw new HttpError(400, 'Choose a client folder');
-      const s = store.createSession(clientName, folder, packageSize);
+      const extraPrice = req.body?.extraPrice === undefined || req.body?.extraPrice === '' ? config.extraImagePrice : parsePrice(req.body.extraPrice);
+      if (extraPrice === null) throw new HttpError(400, 'Enter the extra picture price in whole rand, e.g. 250');
+      const s = store.createSession(clientName, folder, packageSize, extraPrice);
       folders.get(abs, true).then((photos) => images.warm(photos.map((p) => path.join(abs, p.name)))).catch(() => {});
       res.status(201).json(sessionJson(s));
     }),
@@ -239,7 +245,14 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     '/sessions/:id',
     wrap(async (req, res) => {
       const s = sessionById(req);
-      res.json({ session: sessionJson(s), ...(await clientPayload(s)), raws: rawStatus(s) });
+      const payload = await clientPayload(s);
+      const selected = payload.photos.filter((p) => payload.picks[p.name]?.selected).length;
+      res.json({
+        session: sessionJson(s),
+        ...payload,
+        extras: extrasFor(selected, s.package_size, s.extra_price),
+        raws: rawStatus(s),
+      });
     }),
   );
 
@@ -253,7 +266,9 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
       if (packageSize !== undefined && (!Number.isInteger(packageSize) || packageSize < 1 || packageSize > 9999)) {
         throw new HttpError(400, 'Enter a package size');
       }
-      store.updateSession(s.id, { client_name: clientName, package_size: packageSize });
+      const extraPrice = req.body?.extraPrice === undefined ? undefined : parsePrice(req.body.extraPrice);
+      if (extraPrice === null) throw new HttpError(400, 'Enter the extra picture price in whole rand, e.g. 250');
+      store.updateSession(s.id, { client_name: clientName, package_size: packageSize, extra_price: extraPrice });
       res.json(sessionJson(store.getSession(s.id)!));
     }),
   );
@@ -309,9 +324,13 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     wrap(async (req, res) => {
       const s = sessionById(req);
       const photos = await photosFor(s, true);
+      const picks = store.getPicks(s.id);
+      const names = new Set(photos.map((p) => p.name));
+      const selected = picks.filter((p) => p.selected && names.has(p.file_name)).length;
       const csv = buildCsv(
         photos.map((p) => p.name),
-        store.getPicks(s.id),
+        picks,
+        { clientName: s.client_name, ...extrasFor(selected, s.package_size, s.extra_price) },
       );
       const safeName = s.client_name.replace(/[^A-Za-z0-9 _-]/g, '').trim().replace(/\s+/g, '-') || 'session';
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type Session } from '../api';
+import { formatRand } from '../../../shared/pricing';
 import { navigate } from '../nav';
 
 export const fmtTime = (t: number) =>
@@ -22,7 +23,10 @@ export function SessionList({ onAuthLost }: { onAuthLost: (e: unknown) => void }
   return (
     <section>
       <div className="section-head">
-        <h1>Sessions</h1>
+        <div>
+          <span className="eyebrow">Studio</span>
+          <h1>Sessions</h1>
+        </div>
         <div className="seg">
           {(['all', 'in_progress', 'done'] as const).map((k) => (
             <button key={k} className={show === k ? 'on' : ''} onClick={() => setShow(k)}>
@@ -49,7 +53,13 @@ export function SessionList({ onAuthLost }: { onAuthLost: (e: unknown) => void }
                 </div>
                 <div className="session-meta">
                   <span>
-                    <strong>{s.selectedCount}</strong> of {s.packageSize} selected
+                    <strong>{s.selectedCount}</strong> selected · {s.packageSize} included
+                    {s.extras && s.extras.extra > 0 && (
+                      <span className="gold-text">
+                        {' '}
+                        · {s.extras.extra} extra · {formatRand(s.extras.total)}
+                      </span>
+                    )}
                   </span>
                   {s.rawState && (
                     <span className={`chip ${s.rawState === 'done' ? 'done' : s.rawState === 'done_with_issues' || s.rawState === 'failed' || s.rawState === 'interrupted' ? 'warn' : 'progress'}`}>
