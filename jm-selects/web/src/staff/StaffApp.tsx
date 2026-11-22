@@ -5,6 +5,7 @@ import { navigate } from '../nav';
 import { NewSession } from './NewSession';
 import { SessionDetail } from './SessionDetail';
 import { SessionList } from './SessionList';
+import { WifiPoster } from './WifiPoster';
 
 export function StaffApp({ path }: { path: string }) {
   const [staff, setStaff] = useState<boolean | null>(null);
@@ -25,6 +26,7 @@ export function StaffApp({ path }: { path: string }) {
   const detail = path.match(/^\/staff\/sessions\/(\d+)/);
   let body;
   if (path === '/staff/new') body = <NewSession onAuthLost={onAuthLost} />;
+  else if (path === '/staff/wifi') body = <WifiPoster />;
   else if (detail) body = <SessionDetail key={detail[1]} id={Number(detail[1])} onAuthLost={onAuthLost} />;
   else body = <SessionList onAuthLost={onAuthLost} />;
 
@@ -35,6 +37,9 @@ export function StaffApp({ path }: { path: string }) {
           <Brand sub="JM Selects · Studio" />
         </button>
         <div className="staff-actions">
+          <button className="btn ghost" onClick={() => navigate('/staff/wifi')}>
+            Wi-Fi poster
+          </button>
           <button className="btn gold" onClick={() => navigate('/staff/new')}>
             New session
           </button>

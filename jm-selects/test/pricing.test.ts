@@ -75,15 +75,15 @@ describe('extras through the API', () => {
 
   it('never caps selections, and staff see included/extra/total', async () => {
     const s = (await request(app).post('/api/staff/sessions').set('Cookie', cookie).send({ clientName: 'Dlamini', packageSize: 2, folder: '2026/W1 backup/C', extraPrice: 250 })).body;
-    for (let i = 1; i <= 5; i++) await request(app).put(`/api/c/${s.token}/picks/P_${i}.jpg`).send({ selected: true }).expect(200);
-    const client = (await request(app).get(`/api/c/${s.token}`)).body;
+    for (let i = 1; i <= 5; i++) await request(app).put(`/api/c/${s.token}/picks/P_${i}.jpg`).set('Cookie', cookie).send({ selected: true }).expect(200);
+    const client = (await request(app).get(`/api/c/${s.token}`).set('Cookie', cookie)).body;
     expect(client.extraPrice).toBe(250);
     expect(Object.values(client.picks).filter((p: any) => p.selected)).toHaveLength(5);
 
     const d = (await request(app).get(`/api/staff/sessions/${s.id}`).set('Cookie', cookie)).body;
     expect(d.extras).toEqual({ selected: 5, included: 2, extra: 3, price: 250, total: 750 });
 
-    await request(app).put(`/api/c/${s.token}/picks/P_5.jpg`).send({ selected: false }).expect(200);
+    await request(app).put(`/api/c/${s.token}/picks/P_5.jpg`).set('Cookie', cookie).send({ selected: false }).expect(200);
     const list = (await request(app).get('/api/staff/sessions').set('Cookie', cookie)).body;
     expect(list.find((x: any) => x.id === s.id).extras).toMatchObject({ extra: 2, total: 500 });
 

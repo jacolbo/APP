@@ -19,6 +19,9 @@ import { ImageCache, type Variant } from './images.js';
 import { PathError, cleanFileName, cleanRelPath, resolveInside } from './paths.js';
 import { FolderCache, browse, isJpeg } from './photos.js';
 import { RawCopier } from './rawjobs.js';
+import { deviceLabel, hashKey, namesMatch, newDeviceKey, qrSvg, wifiQrText } from './access.js';
+import { LiveBus } from './live.js';
+import type { DeviceRow } from './db.js';
 
 export interface AppDeps {
   config: Config;
@@ -27,13 +30,23 @@ export interface AppDeps {
   folders: FolderCache;
   limiter: PinLimiter;
   raws: RawCopier;
+  live: LiveBus;
 }
 
 class HttpError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+    public extra: Record<string, unknown> = {},
+  ) {
     super(message);
   }
 }
+
+const DEVICE_DAYS = 60;
+const deviceCookieName = (sessionId: number) => `jm_c${sessionId}`;
+const deviceCookie = (sessionId: number, key: string) =>
+  `${deviceCookieName(sessionId)}=${key}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${DEVICE_DAYS * 86400}`;
 
 type Handler = (req: Request, res: Response) => unknown;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) =>
@@ -46,6 +59,9 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
   const folders = overrides.folders ?? new FolderCache();
   const limiter = overrides.limiter ?? new PinLimiter();
   const secret = loadSecret(config.dataDir);
+  const live = overrides.live ?? new LiveBus();
+  // Wrong names from one address across all sessions (on top of the per-session limit).
+  const joinLimiter = new PinLimiter(15, 1000);
   const raws =
     overrides.raws ??
     new RawCopier(store, { photosRoot: config.photosRoot, projectsRoot: config.projectsRoot, backupSuffix: config.backupSuffix });
@@ -100,6 +116,47 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     const abs = resolveInside(config.photosRoot, `${s.folder}/${name}`);
     if (path.dirname(abs) !== dir) throw new HttpError(404, 'Not found');
     return abs;
+  };
+
+  /**
+   * A client device may use a session only after confirming the client's name on it
+   * (or when staff handed over the tablet). Staff, signed in, can always look.
+   */
+  const clientAccess = (req: Request, s: SessionRow): { device: DeviceRow | null; staff: boolean } => {
+    if (isStaff(req)) return { device: null, staff: true };
+    const key = readCookie(req.headers.cookie, deviceCookieName(s.id));
+    const d = key && key.length < 100 ? store.deviceByKey(s.id, hashKey(key)) : undefined;
+    if (!d) {
+      const left = Math.max(0, config.maxJoinAttempts - s.join_failures);
+      throw new HttpError(401, 'Please confirm your name', { needName: true, locked: left === 0, attemptsLeft: left });
+    }
+    if (d.revoked_at) {
+      throw new HttpError(403, 'The studio has removed this device’s access to the gallery. Please ask the studio team.', {
+        revoked: true,
+      });
+    }
+    if (Date.now() - d.last_seen > 30_000) store.touchDevice(d.id);
+    return { device: d, staff: false };
+  };
+
+  const newDevice = (s: SessionRow, req: Request, via: 'name' | 'tablet') => {
+    const key = newDeviceKey();
+    store.addDevice(s.id, hashKey(key), deviceLabel(req.headers['user-agent']), via);
+    return deviceCookie(s.id, key);
+  };
+
+  /** Base address for QR codes: PUBLIC_URL, or the address staff used to open the app. */
+  const baseUrl = (req: Request) => {
+    if (config.publicUrl) return config.publicUrl;
+    const host = String(req.headers.host ?? '');
+    return /^[A-Za-z0-9.\-[\]:]{1,100}$/.test(host) ? `http://${host}` : `http://localhost:${config.port}`;
+  };
+  const sessionLink = (req: Request, s: SessionRow) => `${baseUrl(req)}/c/${s.token}`;
+
+  const sendSvg = (res: Response, svg: string) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('image/svg+xml');
+    res.send(svg);
   };
 
   const sessionJson = (s: SessionRow) => ({
@@ -269,6 +326,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
       const extraPrice = req.body?.extraPrice === undefined ? undefined : parsePrice(req.body.extraPrice);
       if (extraPrice === null) throw new HttpError(400, 'Enter the extra picture price in whole rand, e.g. 250');
       store.updateSession(s.id, { client_name: clientName, package_size: packageSize, extra_price: extraPrice });
+      live.notify(s.id);
       res.json(sessionJson(store.getSession(s.id)!));
     }),
   );
@@ -278,6 +336,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     wrap((req, res) => {
       const s = sessionById(req);
       store.setStatus(s.id, 'in_progress');
+      live.notify(s.id);
       res.json(sessionJson(store.getSession(s.id)!));
     }),
   );
@@ -287,6 +346,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     wrap((req, res) => {
       const s = sessionById(req);
       store.resetSession(s.id);
+      live.notify(s.id);
       res.json(sessionJson(store.getSession(s.id)!));
     }),
   );
@@ -295,6 +355,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     '/sessions/:id',
     wrap((req, res) => {
       const s = sessionById(req);
+      live.kickAll(s.id);
       store.deleteSession(s.id); // app data only; photos are never touched
       res.json({ ok: true });
     }),
@@ -344,8 +405,84 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     '/sessions/:id/handoff',
     wrap((req, res) => {
       const s = sessionById(req);
-      res.setHeader('Set-Cookie', clearCookieHeader());
+      // Staff are present, so this tablet is let in without typing the name.
+      res.setHeader('Set-Cookie', [clearCookieHeader(), newDevice(s, req, 'tablet')]);
       res.json({ url: `/c/${s.token}` });
+    }),
+  );
+
+  staff.get(
+    '/sessions/:id/access',
+    wrap((req, res) => {
+      const s = sessionById(req);
+      const online = live.onlineDevices(s.id);
+      res.json({
+        link: sessionLink(req, s),
+        joinFailures: s.join_failures,
+        locked: s.join_failures >= config.maxJoinAttempts,
+        maxJoinAttempts: config.maxJoinAttempts,
+        devices: store.listDevices(s.id).map((d) => ({
+          id: d.id,
+          label: d.label,
+          via: d.via,
+          joinedAt: d.created_at,
+          lastSeen: d.last_seen,
+          revoked: d.revoked_at !== null,
+          online: online.has(d.id),
+        })),
+      });
+    }),
+  );
+
+  staff.post(
+    '/sessions/:id/devices/:deviceId/revoke',
+    wrap((req, res) => {
+      const s = sessionById(req);
+      const deviceId = Number.parseInt(String(req.params.deviceId), 10);
+      if (!Number.isInteger(deviceId) || !store.revokeDevice(s.id, deviceId)) throw new HttpError(404, 'Device not found');
+      live.kickDevice(s.id, deviceId);
+      res.json({ ok: true });
+    }),
+  );
+
+  /** New link + QR: the old link stops working and every device must join again. */
+  staff.post(
+    '/sessions/:id/regenerate',
+    wrap((req, res) => {
+      const s = sessionById(req);
+      live.kickAll(s.id);
+      const fresh = store.regenerateToken(s.id)!;
+      res.json(sessionJson(fresh));
+    }),
+  );
+
+  staff.post(
+    '/sessions/:id/reset-attempts',
+    wrap((req, res) => {
+      const s = sessionById(req);
+      store.setJoinFailures(s.id, 0);
+      res.json({ ok: true });
+    }),
+  );
+
+  staff.get(
+    '/sessions/:id/qr.svg',
+    wrap(async (req, res) => {
+      const s = sessionById(req);
+      sendSvg(res, await qrSvg(sessionLink(req, s)));
+    }),
+  );
+
+  staff.get('/wifi', (_req, res) => {
+    // The password is never sent as text, only inside the QR image.
+    res.json({ configured: Boolean(config.wifiSsid), ssid: config.wifiSsid, open: !config.wifiPassword });
+  });
+
+  staff.get(
+    '/wifi.svg',
+    wrap(async (_req, res) => {
+      if (!config.wifiSsid) throw new HttpError(404, 'Wi-Fi is not set up (WIFI_SSID in .env)');
+      sendSvg(res, await qrSvg(wifiQrText(config.wifiSsid, config.wifiPassword)));
     }),
   );
 
@@ -357,7 +494,58 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     wrap(async (req, res) => {
       const s = sessionByToken(req);
       res.setHeader('Cache-Control', 'no-cache');
+      clientAccess(req, s);
       res.json(await clientPayload(s, req.query.refresh === '1'));
+    }),
+  );
+
+  /** First open on a phone: the client types their full name. */
+  app.post(
+    '/api/c/:token/join',
+    wrap((req, res) => {
+      const s = sessionByToken(req);
+      const ip = req.socket.remoteAddress ?? 'unknown';
+      const lockedMsg = 'For your privacy this gallery is now locked. Please ask a member of the studio team to help you.';
+      if (s.join_failures >= config.maxJoinAttempts) {
+        throw new HttpError(423, lockedMsg, { needName: true, locked: true, attemptsLeft: 0 });
+      }
+      if (joinLimiter.blockedFor(ip) > 0) {
+        throw new HttpError(429, 'Too many attempts from this device. Please ask the studio team.', { needName: true });
+      }
+      if (!namesMatch(req.body?.name, s.client_name)) {
+        const fails = s.join_failures + 1;
+        store.setJoinFailures(s.id, fails);
+        joinLimiter.fail(ip);
+        const left = Math.max(0, config.maxJoinAttempts - fails);
+        if (left === 0) throw new HttpError(423, lockedMsg, { needName: true, locked: true, attemptsLeft: 0 });
+        throw new HttpError(401, 'That name doesn’t match the booking.', { needName: true, locked: false, attemptsLeft: left });
+      }
+      store.setJoinFailures(s.id, 0);
+      res.setHeader('Set-Cookie', newDevice(s, req, 'name'));
+      live.notify(s.id);
+      res.json({ ok: true });
+    }),
+  );
+
+  /** Live updates for this session (selections from other devices, unlocks, removals). */
+  app.get(
+    '/api/c/:token/events',
+    wrap((req, res) => {
+      const s = sessionByToken(req);
+      const { device } = clientAccess(req, s);
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+      });
+      res.write('retry: 3000\n\n');
+      const conn = { res, deviceId: device?.id ?? null };
+      live.add(s.id, conn);
+      const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+      req.on('close', () => {
+        clearInterval(ping);
+        live.remove(s.id, conn);
+      });
     }),
   );
 
@@ -365,6 +553,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     '/api/c/:token/picks/:file',
     wrap(async (req, res) => {
       const s = sessionByToken(req);
+      clientAccess(req, s);
       if (s.status === 'done') throw new HttpError(409, 'This selection is finished. Ask the studio to unlock it.');
       const abs = photoFile(s, req.params.file);
       if (!fs.existsSync(abs)) throw new HttpError(404, 'Photo not found');
@@ -379,6 +568,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
         change.stars = n;
       }
       const p = store.setPick(s.id, path.basename(abs), change);
+      live.notify(s.id);
       res.json({ selected: !!p.selected, stars: p.stars });
     }),
   );
@@ -387,9 +577,11 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     '/api/c/:token/done',
     wrap((req, res) => {
       const s = sessionByToken(req);
+      clientAccess(req, s);
       if (s.status !== 'done') {
         store.setStatus(s.id, 'done');
         if (raws.enabled()) raws.enqueue(s.id); // copy RAWs in the background
+        live.notify(s.id);
       }
       res.json({ status: 'done' });
     }),
@@ -399,6 +591,7 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
     '/img/c/:token/:variant/:file',
     wrap(async (req, res) => {
       const s = sessionByToken(req);
+      clientAccess(req, s);
       const variant = req.params.variant as Variant;
       if (variant !== 'thumb' && variant !== 'preview') throw new HttpError(404, 'Not found');
       const abs = photoFile(s, req.params.file);
@@ -430,12 +623,15 @@ export function createApp(config: Config, overrides: Partial<AppDeps> = {}) {
 
   // ---------- errors ----------
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
+    if (err instanceof HttpError) {
+      if (res.headersSent) return res.end();
+      return res.status(err.status).json({ error: err.message, ...err.extra });
+    }
     if (err instanceof PathError) return res.status(err.message === 'Not found' ? 404 : 400).json({ error: err.message });
     if ((err as { type?: string }).type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid request' });
     console.error(err);
     res.status(500).json({ error: 'Something went wrong' });
   });
 
-  return { app, store, images, folders, raws };
+  return { app, store, images, folders, raws, live };
 }

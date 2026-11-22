@@ -203,10 +203,106 @@ if (process.env.EXPECT_RAWS) {
   step('Re-copy RAWs adds only the new pick');
 }
 
-await p.getByText('‹ All sessions').click();
+// ---------- QR handover, phones, live sync, revoke, regenerate ----------
+p.on('dialog', (d) => d.accept());
+await p.getByRole('button', { name: 'Show QR code' }).click();
+await p.locator('.qr-sheet img.qr').nth(1).waitFor();
+const back = await p.locator('.modal-back').boundingBox();
+assert.ok(back && back.width >= 1400 && back.height >= 880, `QR sheet must cover the screen, got ${JSON.stringify(back)}`);
+const link = (await p.locator('.qr-link').innerText()).trim();
+assert.match(link, /\/c\/[A-Za-z0-9_-]{24}$/);
+if (process.env.WIFI) {
+  const ok = await p.locator('.qr-sheet img.qr').first().evaluate((img) => img.complete && img.naturalWidth > 0);
+  assert.ok(ok, 'Wi-Fi QR image loads');
+  assert.ok(!(await p.locator('.qr-sheet').innerText()).includes(process.env.WIFI_PASSWORD_CHECK ?? '@@'), 'password not shown');
+}
+await p.waitForTimeout(300);
+await shot(p, '14-qr-sheet');
+await p.getByRole('button', { name: 'Done', exact: true }).click();
+step('staff "Show QR code": Wi-Fi + session QR, password never shown as text');
+
+const phoneCtx = await browser.newContext({ ...devices['iPhone 13'] });
+const ph = await phoneCtx.newPage();
+watch(ph);
+await ph.goto(link);
+await ph.getByRole('heading', { name: 'Welcome' }).waitFor();
+await shot(ph, '15-phone-join');
+await ph.getByPlaceholder('Full name').fill('Someone Else');
+await ph.getByRole('button', { name: 'View my photos' }).click();
+await ph.getByText(/doesn’t match the booking\. 4 tries left\./).waitFor();
+await ph.getByPlaceholder('Full name').fill('  naidoo   FAMILY ');
+await ph.getByRole('button', { name: 'View my photos' }).click();
+await ph.locator('.tile img').first().waitFor();
+step('phone: name check (wrong once, then right, any capitals/spaces)');
+
+const before = await t.locator('.client-top .summary').textContent();
+await ph.locator('.tile .heart').nth(20).click(); // JM_0021
+// The tablet updates live, without reloading.
+await t.waitForFunction((b) => document.querySelector('.client-top .summary')?.textContent !== b, before, { timeout: 8000 });
+// This phone hasn't seen the extra-pictures note yet (the session is over its package).
+await ph.getByRole('button', { name: 'Continue choosing' }).click();
+await ph.waitForTimeout(800);
+await shot(ph, '16-phone-grid');
+step('selections sync live between phone and tablet');
+
+await ph.reload();
+await ph.locator('.tile img').first().waitFor();
+step('phone remembers it is confirmed');
+
+const partnerCtx = await browser.newContext({ ...devices['Pixel 7'] });
+const pa = await partnerCtx.newPage();
+watch(pa);
+await pa.goto(link);
+await pa.getByPlaceholder('Full name').fill('Naidoo Family');
+await pa.getByRole('button', { name: 'View my photos' }).click();
+await pa.locator('.tile img').first().waitFor();
+await p.locator('.devices li').nth(2).waitFor({ timeout: 8000 });
+const devs = await p.locator('.devices li').allInnerTexts();
+assert.equal(devs.length, 3, devs.join(' | '));
+assert.ok(devs.some((d) => /Android phone/.test(d)) && devs.some((d) => /iPhone/.test(d)), devs.join(' | '));
+await p.locator('.devices li', { hasText: 'Android phone' }).locator('.dot-online.on').waitFor({ timeout: 8000 });
+await shot(p, '17-devices');
+step('staff see 3 connected devices (tablet, iPhone, Android), online status');
+
+await p.locator('.devices li', { hasText: 'Android phone' }).getByRole('button', { name: 'Remove' }).click();
+await pa.getByText(/removed this device’s access/).waitFor({ timeout: 8000 });
+assert.equal(await p.locator('.devices li').count(), 2);
+step('staff remove a device: it is shut out immediately');
+
+await p.getByRole('button', { name: 'Show QR code' }).click();
+await p.getByRole('button', { name: 'New QR code' }).click();
+await p.waitForFunction((old) => !document.querySelector('.qr-link')?.textContent.endsWith(old.split('/c/')[1]), link, { timeout: 8000 });
+const newLink = (await p.locator('.qr-link').innerText()).trim();
+assert.notEqual(newLink, link);
+await p.getByRole('button', { name: 'Done', exact: true }).click();
+await ph.getByText('This link is no longer valid').waitFor({ timeout: 8000 });
+await ph.goto(newLink);
+await ph.getByRole('heading', { name: 'Welcome' }).waitFor();
+step('new QR code: old link stops working, phones must scan again');
+
+if (process.env.WIFI) {
+  await p.getByRole('button', { name: 'Wi-Fi poster' }).click();
+  await p.locator('.poster-qr').waitFor();
+  assert.ok(await p.locator('.poster-qr').evaluate((img) => img.complete && img.naturalWidth > 0));
+  assert.ok(!(await p.locator('.poster').innerText()).includes(process.env.WIFI_PASSWORD_CHECK ?? '@@'));
+  await shot(p, '18-wifi-poster');
+  await p.emulateMedia({ media: 'print' });
+  await shot(p, '19-wifi-poster-print');
+  await p.emulateMedia({ media: 'screen' });
+  step('printable Wi-Fi poster (staff only)');
+  const anon = await browser.newPage();
+  const r = await anon.goto(BASE + '/api/staff/wifi.svg');
+  assert.equal(r.status(), 401);
+  await anon.close();
+}
+
+await p.goto(BASE + '/staff');
+await p.getByRole('heading', { name: 'Sessions' }).waitFor();
 await shot(p, '10-staff-list');
 
 await browser.close();
-const relevant = errors.filter((e) => !/favicon/.test(e));
+// 401 (name not confirmed), 403 (device removed) and 404 (old link) are deliberate answers in
+// the access tests; browsers log them as console errors. Anything else fails the run.
+const relevant = errors.filter((e) => !/favicon/.test(e) && !/status of (401|403|404) /.test(e));
 assert.deepEqual(relevant, [], 'browser console errors');
 console.log('\nAll end-to-end checks passed, no console errors.');

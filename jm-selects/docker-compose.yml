@@ -14,6 +14,9 @@ services:
       EXTRA_IMAGE_PRICE: ${EXTRA_IMAGE_PRICE:-250}
       BACKUP_SUFFIX: ${BACKUP_SUFFIX:-backup}
       PROJECTS_LABEL: ${PROJECTS_PATH:?Set PROJECTS_PATH in .env}
+      WIFI_SSID: ${WIFI_SSID:-}
+      WIFI_PASSWORD: ${WIFI_PASSWORD:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
       PUID: ${PUID:-}
       PGID: ${PGID:-}
       TZ: ${TZ:-Africa/Johannesburg}

@@ -1210,3 +1210,338 @@ h2.sub {
 .copy-card .seg {
   flex-wrap: wrap;
 }
+
+/* ============================================================
+   ACCESS: name screen, QR sheet, devices, Wi-Fi poster
+   ============================================================ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.join-card {
+  width: 100%;
+  max-width: 440px;
+  padding: 34px 28px 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+.join-card h1 {
+  font-size: clamp(30px, 7vw, 40px);
+}
+.join-card p {
+  margin: 0;
+}
+.join-input {
+  width: 100%;
+  min-height: 54px;
+  border: 1px solid var(--hair);
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.85);
+  padding: 0 22px;
+  font-size: 17px; /* 16px+ stops iPhone zooming in */
+  font-weight: 400;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.join-input:focus {
+  border-color: var(--gold-line);
+  box-shadow: 0 0 0 4px var(--gold-wash);
+}
+.join-card .btn {
+  width: 100%;
+}
+
+.handover .btn-col {
+  margin-top: 2px;
+}
+.notice {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--r-sm);
+  border: 1px solid rgba(201, 139, 74, 0.55);
+  background: rgba(201, 139, 74, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.notice p {
+  margin: 0;
+}
+.devices {
+  width: 100%;
+  margin-top: 6px;
+}
+.devices .eyebrow {
+  margin-bottom: 6px;
+}
+.devices p {
+  margin: 0;
+}
+.devices ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.devices li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hair);
+}
+.device-name {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 400;
+}
+.dot-online {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hair);
+  flex: none;
+}
+.dot-online.on {
+  background: #4f8a5b;
+  box-shadow: 0 0 0 3px rgba(79, 138, 91, 0.15);
+}
+.danger-link {
+  color: var(--danger);
+  border-color: rgba(155, 59, 47, 0.35);
+  padding: 4px 0;
+}
+
+.qr-sheet {
+  max-width: 760px;
+}
+.qr-steps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 6px;
+}
+.qr-steps section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 14px;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--r);
+  background: rgba(255, 255, 255, 0.55);
+}
+.qr-steps h2 {
+  font-style: italic;
+  font-size: 22px;
+  margin: 0;
+}
+.qr-steps p {
+  margin: 0;
+}
+.step {
+  font-size: 10.5px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.qr {
+  width: min(100%, 260px);
+  aspect-ratio: 1;
+  border-radius: var(--r-sm);
+  background: #fff;
+  padding: 6px;
+  box-shadow: var(--lift);
+}
+.qr-link {
+  margin: 14px 0 0;
+  color: var(--ink-soft);
+}
+@media (max-width: 700px) {
+  .qr-steps {
+    grid-template-columns: 1fr;
+  }
+}
+
+.poster-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 620px;
+  margin: 0 auto 18px;
+  flex-wrap: wrap;
+}
+.poster-tools p {
+  margin: 0;
+}
+.poster {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 56px 40px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: var(--page);
+  border: 1px solid var(--glass-line);
+  border-radius: var(--r);
+  box-shadow: var(--lift-hi);
+}
+.poster-rule {
+  width: 56px;
+  height: 1px;
+  border: 0;
+  background: var(--gold);
+  margin: 26px 0 30px;
+}
+.poster h1 {
+  font-size: clamp(30px, 5vw, 44px);
+  margin: 0 0 30px;
+}
+.poster-qr {
+  width: min(78%, 340px);
+  aspect-ratio: 1;
+}
+.poster-net {
+  font-family: var(--display);
+  font-size: 22px;
+  margin: 22px 0 6px;
+}
+.poster-how {
+  font-size: 14px;
+  color: var(--ink-soft);
+  max-width: 34ch;
+  margin: 0;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 18mm;
+  }
+  body {
+    background: #fff;
+  }
+  body::before,
+  body::after,
+  .staff-top,
+  .poster-tools {
+    display: none !important;
+  }
+  .staff-body {
+    padding: 0;
+    max-width: none;
+  }
+  .poster {
+    border: 0;
+    box-shadow: none;
+    max-width: none;
+    padding-top: 20mm;
+  }
+  .poster-qr {
+    width: 95mm;
+  }
+}
+
+/* ============================================================
+   PHONES
+   ============================================================ */
+@media (max-width: 600px) {
+  .client-top {
+    grid-template-columns: 1fr auto;
+    gap: 8px 10px;
+    padding: max(10px, env(safe-area-inset-top)) 14px 10px;
+  }
+  .client-title {
+    gap: 2px;
+  }
+  .client-title .brand {
+    font-size: 10px;
+    letter-spacing: 0.3em;
+  }
+  .client-title .brand > span {
+    display: none;
+  }
+  .client-name {
+    font-size: 21px;
+  }
+  .client-actions {
+    gap: 6px;
+  }
+  .client-actions .btn,
+  .client-actions .chip {
+    min-height: 40px;
+    padding: 0 14px;
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+  }
+  .summary {
+    font-size: 9.5px;
+    letter-spacing: 0.12em;
+    gap: 0 6px;
+    justify-content: flex-start;
+  }
+  .summary b {
+    font-size: 18px;
+  }
+  .filters {
+    padding: 10px 14px;
+    gap: 6px;
+  }
+  .filters .chip {
+    min-height: 36px;
+    padding: 0 12px;
+  }
+  .save-state {
+    display: none;
+  }
+  .banner {
+    margin: 0 14px 10px;
+    font-size: 13.5px;
+  }
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 0 12px;
+  }
+  .tile figcaption {
+    margin-top: 6px;
+    padding: 0 0 0 6px;
+    min-height: 44px;
+  }
+  .stars.sm button {
+    width: 20px;
+    height: 44px;
+    padding: 13px 1px;
+  }
+  .tile .heart {
+    width: 44px;
+    height: 44px;
+    padding: 11px;
+  }
+  .viewer-bottom {
+    gap: 10px;
+  }
+  .stars:not(.sm) button {
+    width: 34px;
+    padding: 10px 3px;
+  }
+  .modal {
+    padding: 28px 20px 22px;
+  }
+  .staff-actions {
+    flex-wrap: wrap;
+  }
+}

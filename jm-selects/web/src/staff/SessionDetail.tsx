@@ -3,6 +3,7 @@ import { api, copyText, imgUrl, rememberClient, type ClientData, type RawStatus,
 import { formatRand, type Extras } from '../../../shared/pricing';
 import { HeartIcon } from '../icons';
 import { navigate } from '../nav';
+import { HandoverCard } from './Access';
 import { fmtTime } from './SessionList';
 
 type Detail = ClientData & { session: Session; raws: RawStatus; extras: Extras };
@@ -100,21 +101,7 @@ export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: 
       </div>
 
       <div className="card-row">
-        <div className="card">
-          <h2>Client</h2>
-          <p className="muted small">
-            Signs you out on this device and opens the client view. Only this client’s photos are visible.
-          </p>
-          <button className="btn gold" onClick={handoff}>
-            Hand this tablet to the client
-          </button>
-          <p className="muted small">
-            Or open on another device:{' '}
-            <a href={`/c/${s.token}`} target="_blank" rel="noreferrer">
-              client link
-            </a>
-          </p>
-        </div>
+        <HandoverCard id={id} token={s.token} onHandoff={handoff} onTokenChanged={load} />
         <CopyList id={id} />
         <RawCard id={id} raws={d.raws} onChange={load} />
         <div className="card">

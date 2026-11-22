@@ -22,7 +22,7 @@ try {
   process.exit(1);
 }
 
-const { app, store } = createApp(config);
+const { app, store, live } = createApp(config);
 const server = app.listen(config.port, '0.0.0.0', () => {
   console.log(`JM Selects running on port ${config.port}`);
   console.log(`Photos (read-only): ${config.photosRoot}`);
@@ -43,6 +43,7 @@ const server = app.listen(config.port, '0.0.0.0', () => {
 });
 
 const shutdown = () => {
+  live.closeAll(); // end live-update connections so the server can close
   server.close(() => {
     store.close();
     process.exit(0);

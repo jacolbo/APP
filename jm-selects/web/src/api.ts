@@ -2,7 +2,11 @@ import type { Extras } from '../../shared/pricing';
 export type { Extras };
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+    public data: Record<string, unknown> = {},
+  ) {
     super(message);
   }
 }
@@ -16,7 +20,9 @@ export async function api<T>(url: string, init: RequestInit & { json?: unknown }
     body: json !== undefined ? JSON.stringify(json) : rest.body,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error ?? `Error ${res.status}`);
+  if (!res.ok) {
+    throw new ApiError(res.status, (data as { error?: string }).error ?? `Error ${res.status}`, data as Record<string, unknown>);
+  }
   return data as T;
 }
 

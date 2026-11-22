@@ -14,6 +14,7 @@ let app: ReturnType<typeof createApp>['app'];
 let cookie: string;
 let token: string;
 let id: number;
+let dev = '';
 
 function snapshot(dir: string): string {
   const out: string[] = [];
@@ -102,17 +103,21 @@ describe('with a staff login', () => {
     token = r.body.token;
     id = r.body.id;
     expect(token).toMatch(/^[A-Za-z0-9_-]{24}$/);
+    // The client confirms their name on their device.
+    const j = await request(app).post(`/api/c/${token}/join`).send({ name: '  smith   FAMILY ' }).expect(200);
+    dev = String(j.headers['set-cookie']).split(';')[0];
+    expect(dev).toMatch(/^jm_c\d+=/);
   });
 
   it('client sees only JPEGs in their folder', async () => {
-    const r = await request(app).get(`/api/c/${token}`).expect(200);
+    const r = await request(app).get(`/api/c/${token}`).set('Cookie', dev).expect(200);
     expect(r.body.photos.map((p: { name: string }) => p.name)).toEqual(['JM_0001.jpeg', 'JM_0002.JPG', 'JM_0010.jpg']);
     expect(r.body).not.toHaveProperty('folder');
     expect(r.body.packageSize).toBe(2);
   });
 
   it('serves thumbnails with EXIF orientation applied', async () => {
-    const r = await request(app).get(`/img/c/${token}/thumb/JM_0001.jpeg`).buffer(true).parse((res, cb) => {
+    const r = await request(app).get(`/img/c/${token}/thumb/JM_0001.jpeg`).set('Cookie', dev).buffer(true).parse((res, cb) => {
       const chunks: Buffer[] = [];
       res.on('data', (c: Buffer) => chunks.push(c));
       res.on('end', () => cb(null, Buffer.concat(chunks)));
@@ -126,22 +131,22 @@ describe('with a staff login', () => {
 
   it('refuses images outside the folder, RAWs and junk', async () => {
     for (const f of ['..%2F..%2Fsecret.jpg', 'linked.jpg', 'JM_0001.CR3', 'notes.txt', '._JM_0010.jpg', 'nope.jpg']) {
-      const r = await request(app).get(`/img/c/${token}/thumb/${f}`);
+      const r = await request(app).get(`/img/c/${token}/thumb/${f}`).set('Cookie', dev);
       expect([400, 404]).toContain(r.status);
     }
-    await request(app).get(`/img/c/${token}/original/JM_0010.jpg`).expect(404);
-    await request(app).get(`/img/c/notarealtoken12345/thumb/JM_0010.jpg`).expect(404);
+    await request(app).get(`/img/c/${token}/original/JM_0010.jpg`).set('Cookie', dev).expect(404);
+    await request(app).get(`/img/c/notarealtoken12345/thumb/JM_0010.jpg`).set('Cookie', dev).expect(404);
   });
 
   it('saves hearts and stars instantly', async () => {
-    await request(app).put(`/api/c/${token}/picks/JM_0010.jpg`).send({ selected: true }).expect(200);
-    await request(app).put(`/api/c/${token}/picks/JM_0010.jpg`).send({ stars: 5 }).expect(200);
-    await request(app).put(`/api/c/${token}/picks/JM_0002.JPG`).send({ selected: true, stars: 3 }).expect(200);
-    await request(app).put(`/api/c/${token}/picks/JM_0001.jpeg`).send({ stars: 4 }).expect(200);
-    await request(app).put(`/api/c/${token}/picks/JM_0001.jpeg`).send({ stars: 9 }).expect(400);
-    await request(app).put(`/api/c/${token}/picks/JM_0001.CR3`).send({ selected: true }).expect(404);
-    await request(app).put(`/api/c/${token}/picks/..%2Fx.jpg`).send({ selected: true }).expect(400);
-    const r = await request(app).get(`/api/c/${token}`).expect(200);
+    await request(app).put(`/api/c/${token}/picks/JM_0010.jpg`).set('Cookie', dev).send({ selected: true }).expect(200);
+    await request(app).put(`/api/c/${token}/picks/JM_0010.jpg`).set('Cookie', dev).send({ stars: 5 }).expect(200);
+    await request(app).put(`/api/c/${token}/picks/JM_0002.JPG`).set('Cookie', dev).send({ selected: true, stars: 3 }).expect(200);
+    await request(app).put(`/api/c/${token}/picks/JM_0001.jpeg`).set('Cookie', dev).send({ stars: 4 }).expect(200);
+    await request(app).put(`/api/c/${token}/picks/JM_0001.jpeg`).set('Cookie', dev).send({ stars: 9 }).expect(400);
+    await request(app).put(`/api/c/${token}/picks/JM_0001.CR3`).set('Cookie', dev).send({ selected: true }).expect(404);
+    await request(app).put(`/api/c/${token}/picks/..%2Fx.jpg`).set('Cookie', dev).send({ selected: true }).expect(400);
+    const r = await request(app).get(`/api/c/${token}`).set('Cookie', dev).expect(200);
     expect(r.body.picks['JM_0010.jpg']).toEqual({ selected: true, stars: 5 });
   });
 
@@ -161,17 +166,17 @@ describe('with a staff login', () => {
 
   it('new JPEGs appear on refresh', async () => {
     await jpeg(path.join(tree.client, 'JM_0003.jpg'));
-    const r = await request(app).get(`/api/c/${token}?refresh=1`).expect(200);
+    const r = await request(app).get(`/api/c/${token}?refresh=1`).set('Cookie', dev).expect(200);
     expect(r.body.photos).toHaveLength(4);
     fs.rmSync(path.join(tree.client, 'JM_0003.jpg'));
     before = snapshot(tree.root); // our own test edit; the app itself must not change anything
   });
 
   it('"I\'m done" locks changes until staff unlock', async () => {
-    await request(app).post(`/api/c/${token}/done`).expect(200);
-    await request(app).put(`/api/c/${token}/picks/JM_0010.jpg`).send({ selected: false }).expect(409);
+    await request(app).post(`/api/c/${token}/done`).set('Cookie', dev).expect(200);
+    await request(app).put(`/api/c/${token}/picks/JM_0010.jpg`).set('Cookie', dev).send({ selected: false }).expect(409);
     await request(app).post(`/api/staff/sessions/${id}/unlock`).set('Cookie', cookie).expect(200);
-    await request(app).put(`/api/c/${token}/picks/JM_0010.jpg`).send({ selected: false }).expect(200);
+    await request(app).put(`/api/c/${token}/picks/JM_0010.jpg`).set('Cookie', dev).send({ selected: false }).expect(200);
   });
 
   it('lists sessions with counts', async () => {
@@ -187,10 +192,10 @@ describe('with a staff login', () => {
 
   it('reset and delete touch app data only', async () => {
     await request(app).post(`/api/staff/sessions/${id}/reset`).set('Cookie', cookie).expect(200);
-    const r = await request(app).get(`/api/c/${token}`).expect(200);
+    const r = await request(app).get(`/api/c/${token}`).set('Cookie', dev).expect(200);
     expect(r.body.picks).toEqual({});
     await request(app).delete(`/api/staff/sessions/${id}`).set('Cookie', cookie).expect(200);
-    await request(app).get(`/api/c/${token}`).expect(404);
+    await request(app).get(`/api/c/${token}`).set('Cookie', dev).expect(404);
     expect(snapshot(tree.root)).toBe(before);
   });
 });

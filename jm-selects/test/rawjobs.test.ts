@@ -59,7 +59,7 @@ describe('RAW project copies', () => {
   });
 
   const heart = (f: string, on = true) =>
-    request(app.app).put(`/api/c/${token}/picks/${f}`).send({ selected: on }).expect(200);
+    request(app.app).put(`/api/c/${token}/picks/${f}`).set('Cookie', cookie).send({ selected: on }).expect(200);
   const status = async () =>
     (await request(app.app).get(`/api/staff/sessions/${id}/raws`).set('Cookie', cookie).expect(200)).body;
   const dest = () => path.join(projects, '2026', 'Week 47', 'Naidoo Family');
@@ -68,8 +68,8 @@ describe('RAW project copies', () => {
     await heart('JM_0001.jpg');
     await heart('JM_0002.jpg');
     await heart('JM_0003.jpg');
-    await request(app.app).put(`/api/c/${token}/picks/JM_0004.jpg`).send({ stars: 5 }).expect(200); // rated, not hearted
-    await request(app.app).post(`/api/c/${token}/done`).expect(200);
+    await request(app.app).put(`/api/c/${token}/picks/JM_0004.jpg`).set('Cookie', cookie).send({ stars: 5 }).expect(200); // rated, not hearted
+    await request(app.app).post(`/api/c/${token}/done`).set('Cookie', cookie).expect(200);
     await app.raws.idle;
 
     const st = await status();
@@ -118,8 +118,8 @@ describe('RAW project copies', () => {
       .post('/api/staff/sessions')
       .set('Cookie', cookie)
       .send({ clientName: '../../Other', packageSize: 5, folder: '2026/Week 47 backup/Naidoo Family' });
-    await request(app.app).put(`/api/c/${s.body.token}/picks/JM_0004.jpg`).send({ selected: true }).expect(200);
-    await request(app.app).post(`/api/c/${s.body.token}/done`).expect(200);
+    await request(app.app).put(`/api/c/${s.body.token}/picks/JM_0004.jpg`).set('Cookie', cookie).send({ selected: true }).expect(200);
+    await request(app.app).post(`/api/c/${s.body.token}/done`).set('Cookie', cookie).expect(200);
     await app.raws.idle;
     expect(fs.readdirSync(other)).toEqual([]);
     expect(fs.existsSync(path.join(projects, '2026', 'Week 47', 'Other', 'JM_0004.NEF'))).toBe(true);
@@ -138,7 +138,7 @@ describe('without a projects folder', () => {
     const app = createApp(loadConfig({ STAFF_PIN: PIN, PHOTOS_ROOT: base, DATA_DIR: tempDir(), WEB_DIR: '/x' }));
     const c = String((await request(app.app).post('/api/staff/login').send({ pin: PIN })).headers['set-cookie']).split(';')[0];
     const s = await request(app.app).post('/api/staff/sessions').set('Cookie', c).send({ clientName: 'C', packageSize: 5, folder: '2026/W backup/C' });
-    await request(app.app).post(`/api/c/${s.body.token}/done`).expect(200);
+    await request(app.app).post(`/api/c/${s.body.token}/done`).set('Cookie', c).expect(200);
     const st = await request(app.app).get(`/api/staff/sessions/${s.body.id}/raws`).set('Cookie', c).expect(200);
     expect(st.body).toMatchObject({ enabled: false, state: null });
     await request(app.app).post(`/api/staff/sessions/${s.body.id}/raws`).set('Cookie', c).expect(400);

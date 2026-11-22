@@ -57,8 +57,17 @@ Only week folders whose name **ends in “backup”** are offered when starting 
 | `APP_PORT` | The port tablets will use. `8080` is fine unless something else on the NAS already uses it. |
 | `EXTRA_IMAGE_PRICE` | Price per extra picture beyond the package, in whole rand (default `250`). Staff can change it per session. |
 | `PACKAGE_SIZES` | Your package sizes, e.g. `10,20,30,50`. They become quick buttons; staff can also type any number. |
+| `WIFI_SSID` | The studio Wi-Fi name, exactly as phones see it, in single quotes: `WIFI_SSID='Jepson Myles Studio'`. |
+| `WIFI_PASSWORD` | The studio Wi-Fi password, **in single quotes**: `WIFI_PASSWORD='your password'`. Without quotes, a password containing `$`, `#` or spaces gets cut short and the QR code won’t connect. (If the password itself contains a `'`, ask me.) |
+| `PUBLIC_URL` | The address phones use to open the app: `http://192.168.101.153:8080` (use your `APP_PORT`). It goes inside the session QR codes. |
 
 Leave the rest as they are.
+
+**Phones must be on the studio Wi-Fi.** The app only exists on your studio network, with no
+internet involved, so a phone on mobile data, or on a Wi-Fi network that can’t reach the NAS at
+`192.168.101.153`, can’t open it. That’s why the QR sheet has two steps: Wi-Fi first, then the
+gallery. *Note:* many routers’ “guest” networks are deliberately cut off from the NAS; if you
+use one for clients, check a phone on it can open `http://192.168.101.153:8080` first.
 
 ## Folder permissions (read this once)
 
@@ -125,14 +134,37 @@ shortcut that opens in Chrome rather than as a full-screen app. On iPad it opens
 2. **New session** → year → week backup → **Start session** next to the client’s folder.
 3. Check the client name, choose the package size, check the **extra picture price**
    (pre-filled from `EXTRA_IMAGE_PRICE`, change it for this client if needed), then **Start session**.
-4. Tap **Hand this tablet to the client**. This signs staff out on the tablet and opens
-   the client view. The client sees only their own folder.
+4. Make sure the **client name is their full name, exactly as booked** (e.g. *Thandi Nkosi*,
+   not *Nkosi family*). Clients type it on their phones to get in.
+5. Choose how they’ll look at their photos:
+   - **Hand this tablet to the client**: signs staff out on the tablet and opens the client
+     view straight away (no name needed, because you’re handing it over).
+   - **Show QR code**: shows two codes for their phone.
+     **Step 1** joins the studio Wi-Fi. **Step 2** opens this client’s gallery. The first time,
+     the phone asks for their full name. Capitals, extra spaces and accents don’t matter
+     (*thandi  NKOSI* and *Thandi Nkosi* both work). After that the phone remembers them.
+   You can do both: the client on the tablet and their partner on a phone. Everyone sees the same
+   selections, updated live.
+
+**Who’s connected (staff, on the session screen)**
+- **Connected devices** lists every tablet/phone in the session, with a green dot while it’s open.
+- **Remove** shuts that device out immediately.
+- **Show QR code → New QR code** makes a fresh link. The old link and code stop working at once,
+  and every phone has to scan the new code and type the name again. Use this if a code was
+  photographed or shared by mistake.
+- After **5 names that don’t match**, the link locks and the phone says *“Please ask the
+  studio”*. Check the client name on the session, then press **Allow new attempts**.
+
+**Wi-Fi poster for the wall**
+- Staff screen → **Wi-Fi poster** → **Print**. It’s in the Jepson Myles style, with the Wi-Fi QR
+  code and network name. The password is never printed as text.
 
 **The client**
 - Tap a photo to open it full screen; swipe left/right. Tap ♥ to select, tap stars to rate
   (tap the same star again to clear it).
 - Filters: All photos / Selected / by stars.
 - **Compare**: tap two photos to see them side by side.
+- Works on phones as well as the tablet (two photos per row on a phone; tap a photo for full screen).
 - The top of the screen always shows, live: **“23 selected · 20 included · 3 extra · R750”**.
 - There is no limit. The first time a client goes past their package they see one gentle
   note: *“You’ve chosen more than your package includes – extra pictures are R250 each.”*
@@ -197,7 +229,11 @@ Your NAS `docker` share is mounted on the Mac at `/Volumes/docker`, and the app 
    ```
    PROJECTS_PATH=/volume1/…your projects folder…
    EXTRA_IMAGE_PRICE=250
+   WIFI_SSID='Jepson Myles Studio'
+   WIFI_PASSWORD='your-wifi-password'
+   PUBLIC_URL=http://192.168.101.153:8080
    ```
+   Keep the single quotes around the Wi-Fi name and password.
    Save and close TextEdit.
 4. **Re-import the compose file.** On this NAS the compose file was imported by hand, so UGOS
    keeps its own copy. In the UGOS Pro **Docker** app: **Project → jm-selects** → edit the
@@ -206,7 +242,9 @@ Your NAS `docker` share is mounted on the Mac at `/Volumes/docker`, and the app 
    delete the *project* (this doesn't delete your files or `data`), then
    **Project → Create → Import docker-compose.yml**, pick the same folder, and import again.
 5. **Rebuild:** **Project → jm-selects → Rebuild.** It needs internet for a few minutes.
-6. **Check the log** (Project → jm-selects → container → Log). You should see
+6. **Sessions already in progress:** tablets that were handed over before this update will
+   ask for the client’s name. Either type it, or press **Hand this tablet to the client** again.
+7. **Check the log** (Project → jm-selects → container → Log). You should see
    `RAW project copies: /projects (…)` and no “NOT writable” warning. Then open the app on the
    tablet; your sessions are still there.
 
@@ -223,6 +261,10 @@ and are rebuilt automatically). Back up `jm-selects.sqlite` if you want to keep 
 | Container stops straight away | Check the project log. “STAFF_PIN must be set” means fix `.env`. “Photos folder not found” means `PHOTOS_PATH` is wrong. “Set PROJECTS_PATH” means add it to `.env`. |
 | “unable to open database file” / “cannot write to its data folder” | See **Folder permissions**: create the `data` folder from the PC, then Rebuild. |
 | RAW copy says “cannot write to the projects folder” | See **Folder permissions**, then press **Re-copy RAWs**. |
+| Phone says “can’t reach” / page won’t load | The phone isn’t on the studio Wi-Fi (or is on a guest network that can’t reach the NAS). Scan Step 1 first. |
+| QR code opens `localhost` or the wrong address | Set `PUBLIC_URL=http://192.168.101.153:8080` in `.env` and Rebuild. |
+| Wi-Fi QR doesn’t connect | Check `WIFI_SSID`/`WIFI_PASSWORD` in `.env` are exact and in single quotes, then Rebuild. |
+| “Please ask the studio” on a phone | 5 names didn’t match. Check the session’s client name, then **Allow new attempts**. |
 | “Stopped when the app restarted” | The NAS or app restarted mid-copy. Press **Re-copy RAWs**; finished files are skipped. |
 | A photo is listed with “no RAW found” | Check its RAW exists in the client folder with exactly the same name (only the extension may differ). |
 | Tablet can’t open the page | Same Wi-Fi as the NAS? Right port? Try the address on the PC first. |
@@ -244,9 +286,17 @@ and are rebuilt automatically). Back up `jm-selects.sqlite` if you want to keep 
   administrator only to fix the owner of the app’s own `data` folder, then switches user.
 - Staff area needs the PIN. Wrong PINs are rate-limited. The sign-in cookie lasts 12 hours;
   **Lock** signs out.
-- A client link (`/c/…`) contains a long random code that can’t be guessed. It shows only that
-  client’s JPEGs, never other folders. **Anyone who has the link and is on the studio network
-  can open it**, so treat it like a key; deleting the session kills the link.
+- A client link (`/c/…`) contains a long random code that can’t be guessed, and on top of
+  that each phone must type the client’s full name once (5 wrong names lock the link). It shows
+  only that client’s JPEGs, never other folders or other clients. Nothing about the client,
+  not even their name, is shown before the name is confirmed.
+- **New QR code** kills the old link immediately. **Remove** shuts out one device. A removed
+  phone may still have photos it already viewed in its browser’s cache, so if that matters, ask the
+  client to close the tab. Deleting the session kills the link too.
+- **The Wi-Fi QR code contains the Wi-Fi password.** Anyone who scans or photographs the
+  poster can join that Wi-Fi network. Only put up the poster for a network you’re happy for
+  visitors to use. The password is never shown as text in the app, but it is stored in `.env`
+  and is visible to NAS administrators in the container’s settings.
 - It runs over plain `http://` on your local network. Anyone on the same Wi-Fi could
   technically watch the traffic. If you have a guest Wi-Fi for visitors, keep it separate
   from the network the NAS is on.
@@ -287,6 +337,6 @@ Windows can’t enforce read-only for a local run the way Docker’s `:ro` does.
 Tests:
 
 ```bash
-npm test                     # 139 unit + API tests (incl. extra count/total, path safety, JPEG filter, copy list, RAW matching, writes only inside projects, API)
+npm test                     # 172 unit + API tests (incl. name matching, removed/old links refused, Wi-Fi QR decoded, extra count/total, path safety, JPEG filter, copy list, RAW matching, writes only inside projects, API)
 BASE=http://localhost:8080 PIN=482916 node test/e2e.mjs   # browser run; needs Playwright installed
 ```

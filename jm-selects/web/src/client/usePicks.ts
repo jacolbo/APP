@@ -26,9 +26,15 @@ function savePending(token: string, p: Record<string, Change>) {
  * straight away. Taps that can't reach the NAS (Wi-Fi blip, tablet asleep) are kept on
  * the tablet and re-sent automatically, so nothing is lost.
  */
+export type Gate =
+  | { kind: 'ok' }
+  | { kind: 'needName'; locked: boolean; attemptsLeft: number }
+  | { kind: 'revoked'; message: string };
+
 export function useClientSession(token: string) {
   const [data, setData] = useState<ClientData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [gate, setGate] = useState<Gate | null>(null);
   const [saving, setSaving] = useState<'saved' | 'saving' | 'offline'>('saved');
   const pending = useRef<Record<string, Change>>(loadPending(token));
   const flushing = useRef(false);
@@ -48,9 +54,19 @@ export function useClientSession(token: string) {
         const d = await api<ClientData>(`/api/c/${token}${refresh ? '?refresh=1' : ''}`);
         setData(merge(d));
         setError(null);
+        setGate({ kind: 'ok' });
       } catch (e) {
-        if (e instanceof ApiError && e.status === 404) setError(e.message);
-        // network errors: keep showing what we have
+        if (!(e instanceof ApiError)) return; // network blip: keep showing what we have
+        if (e.status === 404) {
+          setError('This link is no longer valid. Please scan the new code from the studio.');
+          setData(null);
+        } else if (e.data.needName) {
+          setData(null);
+          setGate({ kind: 'needName', locked: Boolean(e.data.locked), attemptsLeft: Number(e.data.attemptsLeft ?? 0) });
+        } else if (e.data.revoked) {
+          setData(null);
+          setGate({ kind: 'revoked', message: e.message });
+        }
       }
     },
     [token, merge],
@@ -67,8 +83,18 @@ export function useClientSession(token: string) {
           await api(`/api/c/${token}/picks/${encodeURIComponent(name)}`, { method: 'PUT', json: change });
           if (pending.current[name] === change) delete pending.current[name];
         } catch (e) {
+          if (e instanceof ApiError && e.status === 401) {
+            // This device needs to confirm the name again: keep the taps for afterwards.
+            await load();
+            return;
+          }
           if (e instanceof ApiError && e.status < 500) {
-            delete pending.current[name]; // rejected (locked / photo removed): drop it
+            delete pending.current[name]; // rejected (locked / removed / photo gone): drop it
+            if (e.status === 403) {
+              pending.current = {};
+              await load();
+              return;
+            }
             if (e.status === 409) {
               pending.current = {};
               savePending(token, pending.current);
@@ -104,11 +130,48 @@ export function useClientSession(token: string) {
     [token, flush],
   );
 
+  /** Confirm the client's name on this device. Returns an error message, or null when let in. */
+  const join = useCallback(
+    async (name: string): Promise<string | null> => {
+      try {
+        await api(`/api/c/${token}/join`, { method: 'POST', json: { name } });
+        await load();
+        return null;
+      } catch (e) {
+        if (e instanceof ApiError) {
+          if (e.data.needName) {
+            setGate({ kind: 'needName', locked: Boolean(e.data.locked), attemptsLeft: Number(e.data.attemptsLeft ?? 0) });
+          }
+          if (e.status === 404) setError('This link is no longer valid. Please scan the new code from the studio.');
+          return e.message;
+        }
+        return 'Can’t reach the studio system. Check you’re on the studio Wi-Fi.';
+      }
+    },
+    [token, load],
+  );
+
   const markDone = useCallback(async () => {
     await flush();
     await api(`/api/c/${token}/done`, { method: 'POST' });
     await load();
   }, [token, flush, load]);
+
+  // Live updates from other phones/tablets in this session.
+  const allowed = gate?.kind === 'ok';
+  useEffect(() => {
+    if (!allowed || typeof EventSource === 'undefined') return;
+    const es = new EventSource(`/api/c/${token}/events`);
+    const refresh = () => void load();
+    es.addEventListener('changed', refresh);
+    es.addEventListener('revoked', refresh);
+    es.addEventListener('gone', refresh);
+    es.onerror = () => {
+      // The browser retries by itself; if access was removed, find out why.
+      if (es.readyState === EventSource.CLOSED) void load();
+    };
+    return () => es.close();
+  }, [allowed, token, load]);
 
   useEffect(() => {
     void load();
@@ -132,5 +195,5 @@ export function useClientSession(token: string) {
     };
   }, [load, flush]);
 
-  return { data, error, saving, change, markDone, refresh: () => load(true) };
+  return { data, error, gate, saving, change, join, markDone, refresh: () => load(true) };
 }

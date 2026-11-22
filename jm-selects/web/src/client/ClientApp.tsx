@@ -6,6 +6,7 @@ import { HeartIcon } from '../icons';
 import { navigate } from '../nav';
 import { Compare } from './Compare';
 import { Stars } from './Stars';
+import { JoinScreen } from './JoinScreen';
 import { useClientSession } from './usePicks';
 import { Viewer } from './Viewer';
 
@@ -13,7 +14,7 @@ type Filter = 'all' | 'selected' | 1 | 2 | 3 | 4 | 5;
 const NO_PICK: Pick = { selected: false, stars: 0 };
 
 export function ClientApp({ token }: { token: string }) {
-  const { data, error, saving, change, markDone, refresh } = useClientSession(token);
+  const { data, error, gate, saving, change, join, markDone, refresh } = useClientSession(token);
   const [filter, setFilter] = useState<Filter>('all');
   const [viewing, setViewing] = useState<string | null>(null);
   const [comparePick, setComparePick] = useState<string[] | null>(null); // null = not choosing
@@ -57,6 +58,17 @@ export function ClientApp({ token }: { token: string }) {
         <button className="link-btn" onClick={() => navigate('/staff')}>
           Studio sign-in
         </button>
+      </div>
+    );
+  }
+  if (gate?.kind === 'needName') {
+    return <JoinScreen locked={gate.locked} attemptsLeft={gate.attemptsLeft} onJoin={join} />;
+  }
+  if (gate?.kind === 'revoked') {
+    return (
+      <div className="center-screen">
+        <Brand large />
+        <p className="muted">{gate.message}</p>
       </div>
     );
   }

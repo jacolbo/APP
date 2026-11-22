@@ -11,10 +11,22 @@ export interface SessionRow {
   folder: string;
   package_size: number;
   extra_price: number;
+  join_failures: number;
   status: Status;
   created_at: number;
   updated_at: number;
   done_at: number | null;
+}
+
+export interface DeviceRow {
+  id: number;
+  session_id: number;
+  key_hash: string;
+  label: string;
+  via: 'name' | 'tablet';
+  created_at: number;
+  last_seen: number;
+  revoked_at: number | null;
 }
 
 export interface PickRow {
@@ -58,11 +70,27 @@ export class Store {
         updated_at INTEGER NOT NULL
       );
     `);
-    // Older databases: add the per-session extra picture price.
+    // Older databases: add newer columns.
     const cols = this.db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
     if (!cols.some((c) => c.name === 'extra_price')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN extra_price INTEGER NOT NULL DEFAULT 250');
     }
+    if (!cols.some((c) => c.name === 'join_failures')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN join_failures INTEGER NOT NULL DEFAULT 0');
+    }
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        key_hash TEXT NOT NULL UNIQUE,
+        label TEXT NOT NULL,
+        via TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_seen INTEGER NOT NULL,
+        revoked_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS devices_session ON devices(session_id);
+    `);
     // A job that was running when the app stopped can't still be running.
     this.db
       .prepare(`UPDATE raw_jobs SET state = 'interrupted' WHERE state IN ('queued', 'running')`)
@@ -176,6 +204,52 @@ export class Store {
   rawJobStates(): Map<number, string> {
     const rows = this.db.prepare('SELECT session_id, state FROM raw_jobs').all() as { session_id: number; state: string }[];
     return new Map(rows.map((r) => [r.session_id, r.state]));
+  }
+
+  // ---------- devices (phones/tablets allowed into a session) ----------
+
+  addDevice(sessionId: number, keyHash: string, label: string, via: 'name' | 'tablet'): DeviceRow {
+    const now = Date.now();
+    const info = this.db
+      .prepare('INSERT INTO devices (session_id, key_hash, label, via, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(sessionId, keyHash, label, via, now, now);
+    return this.db.prepare('SELECT * FROM devices WHERE id = ?').get(Number(info.lastInsertRowid)) as DeviceRow;
+  }
+
+  deviceByKey(sessionId: number, keyHash: string): DeviceRow | undefined {
+    return this.db.prepare('SELECT * FROM devices WHERE session_id = ? AND key_hash = ?').get(sessionId, keyHash) as
+      | DeviceRow
+      | undefined;
+  }
+
+  listDevices(sessionId: number): DeviceRow[] {
+    return this.db.prepare('SELECT * FROM devices WHERE session_id = ? ORDER BY created_at').all(sessionId) as DeviceRow[];
+  }
+
+  touchDevice(id: number): void {
+    this.db.prepare('UPDATE devices SET last_seen = ? WHERE id = ?').run(Date.now(), id);
+  }
+
+  revokeDevice(sessionId: number, deviceId: number): boolean {
+    const r = this.db
+      .prepare('UPDATE devices SET revoked_at = ? WHERE id = ? AND session_id = ? AND revoked_at IS NULL')
+      .run(Date.now(), deviceId, sessionId);
+    return r.changes > 0;
+  }
+
+  setJoinFailures(sessionId: number, n: number): void {
+    this.db.prepare('UPDATE sessions SET join_failures = ? WHERE id = ?').run(n, sessionId);
+  }
+
+  /** New link for the session: the old link stops working and every device has to join again. */
+  regenerateToken(sessionId: number): SessionRow | undefined {
+    const token = crypto.randomBytes(18).toString('base64url');
+    this.db.transaction(() => {
+      this.db.prepare('UPDATE sessions SET token = ?, join_failures = 0, updated_at = ? WHERE id = ?').run(token, Date.now(), sessionId);
+      // Forget every device: they must scan the new code and confirm the name again.
+      this.db.prepare('DELETE FROM devices WHERE session_id = ?').run(sessionId);
+    })();
+    return this.getSession(sessionId);
   }
 
   close(): void {

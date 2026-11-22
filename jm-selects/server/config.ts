@@ -16,6 +16,13 @@ export interface Config {
   projectsRoot: string | null;
   /** How the projects folder is shown to staff (the NAS path). */
   projectsLabel: string;
+  /** Studio Wi-Fi for the join QR code (empty = not set up). */
+  wifiSsid: string;
+  wifiPassword: string;
+  /** Address put in session QR codes, e.g. http://192.168.101.153:8080 (empty = use the address staff opened). */
+  publicUrl: string;
+  /** Wrong-name attempts allowed per session link before it locks. */
+  maxJoinAttempts: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -50,6 +57,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         ? '/projects'
         : null,
     projectsLabel: (env.PROJECTS_LABEL ?? '').trim() || 'Projects',
+    wifiSsid: (env.WIFI_SSID ?? '').trim(),
+    wifiPassword: env.WIFI_PASSWORD ?? '',
+    publicUrl: cleanPublicUrl(env.PUBLIC_URL),
+    maxJoinAttempts: 5,
     webDir: path.resolve(env.WEB_DIR ?? path.join(import.meta.dirname, '..', 'web')),
   };
+}
+
+function cleanPublicUrl(v: string | undefined): string {
+  const t = (v ?? '').trim().replace(/\/+$/, '');
+  if (!t) return '';
+  if (!/^https?:\/\/[A-Za-z0-9.\-[\]:]+$/.test(t)) {
+    throw new Error('PUBLIC_URL must look like http://192.168.101.153:8080');
+  }
+  return t;
 }
