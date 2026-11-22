@@ -190,17 +190,25 @@ shortcut that opens in Chrome rather than as a full-screen app. On iPad it opens
 - If two RAWs in the client folder have the same name (e.g. one in a subfolder), the one
   next to the JPEG is used.
 
-**Afterwards (staff, on the PC)**
-1. Open the session.
-2. **Copy list for Capture One**: choose **♥ Hearted** or **★ Stars** (minimum rating),
-   with or without the `.jpg` extension, then **Copy list** and paste into Capture One.
-3. The session screen shows **selected, included, extra and the extra total**. Use
-   **Change package / price** if needed.
-4. **Export CSV** gives a spreadsheet: a summary at the top (client, selected, included,
-   extra pictures, price each, extra total), then every photo with selected/stars.
-5. **Unlock for changes** if the client wants to change something.
-   **Reset selections** clears hearts/stars. **Delete session** removes the session.
-   Neither touches the photos.
+**The session screen (staff)**
+
+One summary card shows everything at a glance: client name, package, **selected · included ·
+extra · extra total**, the status (*In progress* / *Done*), and the RAW copy status
+(*Copying 12 of 23…*, then *RAWs ready ✓* with the project folder path and **Copy path**).
+
+Main buttons, only what you need right now:
+- **In progress:** **Hand this tablet to the client** and **Show QR code**.
+- **Done:** **Unlock for changes** (if the client wants to change something).
+
+Everything else is under **⋯ More**:
+- **Copy list for Capture One**: choose **♥ Hearted** or **★ Stars** (minimum rating), with
+  or without the `.jpg` extension, then **Copy list** and paste into Capture One.
+- **Re-copy RAWs**: after an unlock and new picks. Adds the new ones, skips what’s there.
+- **Export CSV**: a summary at the top (client, selected, included, extra pictures, price
+  each, extra total), then every photo with selected/stars.
+- **Package & price**: change the pictures included or the extra price for this client.
+- **Reset selections** / **Delete session** (in red, at the bottom): each asks you to confirm
+  first. Neither touches the photos or the RAW copies.
 
 New JPEGs copied into the client’s folder appear within about 5 seconds (or press **Refresh**).
 

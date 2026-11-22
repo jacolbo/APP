@@ -152,55 +152,101 @@ await p.goto(BASE + '/staff');
 await p.getByLabel('Staff PIN').fill(PIN);
 await p.keyboard.press('Enter');
 await p.getByText('Naidoo Family').first().click();
-await p.locator('.section-head .chip', { hasText: /^Done / }).waitFor();
-const stats = (await p.locator('.stat-row').innerText()).replace(/\s+/g, ' ');
-assert.match(stats, /12 selected 10 included 2 extra × R250 R500 extra total/i, stats);
-const ta = p.locator('.copy-card textarea');
-await p.waitForFunction(() => document.querySelector('.copy-card textarea')?.value.length > 0);
-const list = await ta.inputValue();
-assert.equal(list, 'JM_0001,JM_0002,JM_0003,JM_0006,JM_0007,JM_0008,JM_0009,JM_0010,JM_0011,JM_0012,JM_0013,JM_0014');
-await p.getByRole('button', { name: /Copy list/ }).click();
+await p.locator('.chip.status', { hasText: /^Done/ }).waitFor();
+const sessionId = p.url().match(/sessions\/(\d+)/)[1];
+const facts = (await p.locator('.facts').innerText()).replace(/\s+/g, ' ');
+assert.match(facts, /selected 12 included 10 extra 2 extra total R500/i, facts);
+// Done: the only primary action is Unlock; handover buttons are hidden.
+assert.equal(await p.getByRole('button', { name: 'Hand this tablet to the client' }).count(), 0);
+assert.equal(await p.locator('.actions .btn').count(), 2, 'Unlock + More only');
+step('summary card: selected / included / extra / R500, status Done, one primary action');
+
+// RAW project copies (only when the server has a projects folder).
+if (process.env.EXPECT_RAWS) {
+  const line = p.locator('.raw-line');
+  await line.getByText(/RAWs ready/).waitFor({ timeout: 30000 });
+  const text = await line.innerText();
+  assert.match(text, /2026\/Week 47\/Naidoo Family/);
+  const raws = await (await p.request.get(`${BASE}/api/staff/sessions/${sessionId}/raws`)).json();
+  assert.equal(raws.copied, Number(process.env.EXPECT_RAWS));
+  await line.getByRole('button', { name: /1 without a RAW/ }).click();
+  await line.getByText('JM_0006.jpg · no RAW found').waitFor();
+  await line.getByRole('button', { name: 'Copy path' }).click();
+  await line.getByRole('button', { name: 'Copied' }).waitFor();
+  await shot(p, '09-staff-session');
+  step('RAWs ready ✓ with path + copy-path, missing RAW listed');
+}
+
+// Everything else lives in the ⋯ More menu.
+const openMore = async () => {
+  await p.getByRole('button', { name: /More/ }).click();
+  await p.locator('.sheet .menu').waitFor();
+};
+await openMore();
+const items = await p.locator('.sheet .menu-item').allInnerTexts();
+assert.deepEqual(
+  items.map((x) => x.replace(/\s*›$/, '').trim()),
+  ['Copy list for Capture One', 'Re-copy RAWs', 'Export CSV', 'Package & price', 'Reset selections', 'Delete session'],
+);
+assert.equal(await p.locator('.sheet .menu-item.danger').count(), 2, 'Reset + Delete are the danger items, at the bottom');
+await shot(p, '09b-more-menu');
+await p.getByRole('button', { name: /Copy list for Capture One/ }).click();
+const ta = p.locator('.copy-list textarea');
+await p.waitForFunction(() => document.querySelector('.copy-list textarea')?.value.length > 0);
+assert.equal(await ta.inputValue(), 'JM_0001,JM_0002,JM_0003,JM_0006,JM_0007,JM_0008,JM_0009,JM_0010,JM_0011,JM_0012,JM_0013,JM_0014');
+await p.locator('.copy-list').getByRole('button', { name: /Copy list/ }).click();
 await p.getByText('Copied 12 file names').waitFor();
 await p.getByText('★ Stars').click();
 await p.getByLabel('Minimum stars').selectOption('4');
 await p.getByLabel(/Include file extension/).check();
-await p.waitForFunction(() => document.querySelector('.copy-card textarea')?.value === 'JM_0002.jpg,JM_0003.jpg');
-await shot(p, '09-staff-session');
-step('staff copy list (hearted / 4★+ with extension), copy button');
+await p.waitForFunction(() => document.querySelector('.copy-list textarea')?.value === 'JM_0002.jpg,JM_0003.jpg');
+await shot(p, '09c-copy-list');
+step('More → Copy list (hearted / 4★+ with extension), copy button');
 
-// RAW project copies (only when the server has a projects folder).
-if (process.env.EXPECT_RAWS) {
-  const card = p.locator('.raw-card');
-  await card.getByText(/copied/).waitFor({ timeout: 30000 });
-  const text = await card.innerText();
-  assert.match(text, new RegExp(`${process.env.EXPECT_RAWS} copied`), text);
-  assert.match(text, /2026\/Week 47\/Naidoo Family/);
-  await card.getByText(/with no RAW found/).click();
-  await card.getByText('JM_0006.jpg').waitFor();
-  await shot(p, '11-raw-card');
-  step('RAWs copied after "I\'m done", missing RAW listed');
-}
-
-const [dl] = await Promise.all([p.waitForEvent('download'), p.getByText('Export CSV').click()]);
+await p.getByRole('button', { name: '‹ Back' }).click();
+const [dl] = await Promise.all([p.waitForEvent('download'), p.locator('.sheet').getByText('Export CSV').click()]);
 const csv = await (await import('node:fs/promises')).readFile(await dl.path(), 'utf8');
 assert.match(csv, /"JM_0003.jpg","yes","5"/);
 assert.match(csv, /"Extra pictures","2"/);
 assert.match(csv, /"Extra total","R500"/);
-step('CSV export with included / extra / total');
+await p.locator('.sheet').waitFor({ state: 'detached' });
+step('More → Export CSV with included / extra / total');
+
+// Destructive actions need a confirmation step; cancelling changes nothing.
+await openMore();
+await p.locator('.sheet').getByRole('button', { name: 'Reset selections' }).click();
+await p.locator('.sheet .confirm-box').getByText(/will be cleared/).waitFor();
+await shot(p, '09d-confirm-reset');
+await p.locator('.sheet').getByRole('button', { name: 'Cancel' }).click();
+await p.locator('.sheet').getByRole('button', { name: 'Delete session' }).click();
+await p.locator('.sheet').getByRole('button', { name: 'Cancel' }).click();
+await p.locator('.sheet').getByRole('button', { name: 'Close' }).click();
+assert.match((await p.locator('.facts').innerText()).replace(/\s+/g, ' '), /selected 12/i);
+step('Reset / Delete ask to confirm; cancel leaves everything as it was');
 
 await p.getByRole('button', { name: 'Unlock for changes' }).click();
-await p.getByText('In progress').first().waitFor();
+await p.locator('.chip.status', { hasText: 'In progress' }).waitFor();
+await p.getByRole('button', { name: 'Hand this tablet to the client' }).waitFor();
 await t.reload();
 await t.getByRole('button', { name: 'I’m done' }).waitFor();
-step('staff unlock re-opens the client tablet');
+step('Unlock: tablet re-opens; handover options come back');
 
 if (process.env.EXPECT_RAWS) {
   await t.locator('.tile .heart').nth(14).click(); // JM_0015
   await t.getByText('All changes saved').waitFor();
-  await p.getByRole('button', { name: 'Re-copy RAWs' }).click();
-  await p.locator('.raw-card').getByText(/1 copied, \d+ already there/).waitFor({ timeout: 30000 });
-  await shot(p, '12-raw-recopy');
-  step('Re-copy RAWs adds only the new pick');
+  await openMore();
+  await p.locator('.sheet').getByRole('button', { name: 'Re-copy RAWs' }).click();
+  await p.locator('.sheet').waitFor({ state: 'detached' });
+  await p.waitForFunction(
+    async ([url]) => {
+      const r = await (await fetch(url)).json();
+      return r.state?.startsWith('done') && r.copied === 1;
+    },
+    [`${BASE}/api/staff/sessions/${sessionId}/raws`],
+    { timeout: 30000 },
+  );
+  await p.locator('.raw-line').getByText(/RAWs ready/).waitFor();
+  step('More → Re-copy RAWs adds only the new pick');
 }
 
 // ---------- QR handover, phones, live sync, revoke, regenerate ----------
@@ -264,13 +310,15 @@ await p.locator('.devices li', { hasText: 'Android phone' }).locator('.dot-onlin
 await shot(p, '17-devices');
 step('staff see 3 connected devices (tablet, iPhone, Android), online status');
 
-await p.locator('.devices li', { hasText: 'Android phone' }).getByRole('button', { name: 'Remove' }).click();
+await p.locator('.devices li', { hasText: 'Android phone' }).getByRole('button', { name: /^Remove/ }).click();
+await p.locator('.devices li', { hasText: 'Android phone' }).getByRole('button', { name: 'Remove access' }).click();
 await pa.getByText(/removed this device’s access/).waitFor({ timeout: 8000 });
 assert.equal(await p.locator('.devices li').count(), 2);
 step('staff remove a device: it is shut out immediately');
 
 await p.getByRole('button', { name: 'Show QR code' }).click();
 await p.getByRole('button', { name: 'New QR code' }).click();
+await p.getByRole('button', { name: 'Make new code' }).click();
 await p.waitForFunction((old) => !document.querySelector('.qr-link')?.textContent.endsWith(old.split('/c/')[1]), link, { timeout: 8000 });
 const newLink = (await p.locator('.qr-link').innerText()).trim();
 assert.notEqual(newLink, link);

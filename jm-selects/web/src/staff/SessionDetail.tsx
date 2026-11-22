@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api, copyText, imgUrl, rememberClient, type ClientData, type RawStatus, type Session } from '../api';
 import { formatRand, type Extras } from '../../../shared/pricing';
 import { HeartIcon } from '../icons';
 import { navigate } from '../nav';
-import { HandoverCard } from './Access';
+import { Devices, QrSheet, useAccessInfo } from './Access';
 import { fmtTime } from './SessionList';
 
 type Detail = ClientData & { session: Session; raws: RawStatus; extras: Extras };
@@ -12,6 +13,9 @@ export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: 
   const [d, setD] = useState<Detail | null>(null);
   const [error, setError] = useState('');
   const [onlyPicked, setOnlyPicked] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const [qr, setQr] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(
     () =>
@@ -27,7 +31,7 @@ export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: 
     [id, onAuthLost],
   );
 
-  // Poll faster while RAWs are being copied so the progress bar moves.
+  // Poll faster while RAWs are being copied so the progress moves.
   const copying = d?.raws.state === 'queued' || d?.raws.state === 'running';
   useEffect(() => {
     void load();
@@ -35,16 +39,12 @@ export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: 
     return () => clearInterval(t);
   }, [load, copying]);
 
+  const access = useAccessInfo(id, d?.session.token ?? '');
+
   if (error && !d) return <p className="error">{error}</p>;
   if (!d) return <p className="muted">Loading…</p>;
   const s = d.session;
-  const selected = d.photos.filter((p) => d.picks[p.name]?.selected).length;
-  const rated = d.photos.filter((p) => (d.picks[p.name]?.stars ?? 0) > 0).length;
-
-  const act = async (path: string, method = 'POST') => {
-    await api(`/api/staff/sessions/${id}${path}`, { method }).catch((e) => alert(e.message));
-    await load();
-  };
+  const done = s.status === 'done';
 
   const handoff = async () => {
     const r = await api<{ url: string }>(`/api/staff/sessions/${id}/handoff`, { method: 'POST' });
@@ -52,95 +52,85 @@ export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: 
     navigate(r.url, true);
   };
 
+  const unlock = async () => {
+    setBusy(true);
+    await api(`/api/staff/sessions/${id}/unlock`, { method: 'POST' }).catch((e) => alert(e.message));
+    setBusy(false);
+    await load();
+  };
+
   const grid = onlyPicked
     ? d.photos.filter((p) => d.picks[p.name]?.selected || (d.picks[p.name]?.stars ?? 0) > 0)
     : d.photos;
 
   return (
-    <section>
-      <button className="link-btn" onClick={() => navigate('/staff')}>
+    <section className="session">
+      <button className="back-link" onClick={() => navigate('/staff')}>
         ‹ All sessions
       </button>
-      <div className="section-head">
-        <div>
-          <span className="eyebrow">Session</span>
-          <h1>{s.clientName}</h1>
-          <div className="muted small">{s.folder}</div>
-        </div>
-        <span className={`chip ${s.status === 'done' ? 'done' : 'progress'}`}>
-          {s.status === 'done' ? `Done ${s.doneAt ? fmtTime(s.doneAt) : ''}` : 'In progress'}
-        </span>
-      </div>
 
-      <div className="stat-row pane">
-        <div className="stat">
-          <strong>{selected}</strong>
-          <span>selected</span>
-        </div>
-        <div className="stat">
-          <strong>{d.extras.included}</strong>
-          <span>included</span>
-        </div>
-        <div className={`stat ${d.extras.extra ? 'gold' : ''}`}>
-          <strong>{d.extras.extra}</strong>
-          <span>extra × {formatRand(d.extras.price)}</span>
-        </div>
-        <div className={`stat ${d.extras.extra ? 'gold' : ''}`}>
-          <strong>{formatRand(d.extras.total)}</strong>
-          <span>extra total</span>
-        </div>
-        <div className="stat">
-          <strong>{rated}</strong>
-          <span>rated</span>
-        </div>
-        <div className="stat">
-          <strong>{d.photos.length}</strong>
-          <span>photos</span>
-        </div>
-        <PackageEdit session={s} onSaved={load} />
-      </div>
-
-      <div className="card-row">
-        <HandoverCard id={id} token={s.token} onHandoff={handoff} onTokenChanged={load} />
-        <CopyList id={id} />
-        <RawCard id={id} raws={d.raws} onChange={load} />
-        <div className="card">
-          <h2>Manage</h2>
-          <div className="btn-col">
-            <a className="btn ghost" href={`/api/staff/sessions/${id}/export.csv`} download>
-              Export CSV
-            </a>
-            {s.status === 'done' && (
-              <button className="btn ghost" onClick={() => act('/unlock')}>
-                Unlock for changes
-              </button>
-            )}
-            <button
-              className="btn ghost"
-              onClick={() => confirm('Clear all hearts and stars for this session? Photos are not affected.') && act('/reset')}
-            >
-              Reset selections
-            </button>
-            <button
-              className="btn danger"
-              onClick={async () => {
-                if (!confirm(`Delete the session for ${s.clientName}? This removes app data only — photos are never touched.`))
-                  return;
-                await api(`/api/staff/sessions/${id}`, { method: 'DELETE' }).catch((e) => alert(e.message));
-                navigate('/staff', true);
-              }}
-            >
-              Delete session
-            </button>
+      <article className="pane summary-card">
+        <header className="summary-head">
+          <div className="summary-title">
+            <span className="eyebrow">{s.folder.split('/').slice(0, 2).join(' · ')}</span>
+            <h1>{s.clientName}</h1>
+            <p className="muted small">
+              Package {s.packageSize} · {formatRand(s.extraPrice)} per extra picture
+            </p>
           </div>
-        </div>
-      </div>
+          <span className={`chip status ${done ? 'done' : 'progress'}`}>
+            {done ? `Done${s.doneAt ? ` · ${fmtTime(s.doneAt)}` : ''}` : 'In progress'}
+          </span>
+        </header>
 
-      <div className="section-head">
+        <dl className="facts">
+          <div>
+            <dt>Selected</dt>
+            <dd>{d.extras.selected}</dd>
+          </div>
+          <div>
+            <dt>Included</dt>
+            <dd>{d.extras.included}</dd>
+          </div>
+          <div className={d.extras.extra ? 'gold' : ''}>
+            <dt>Extra</dt>
+            <dd>{d.extras.extra}</dd>
+          </div>
+          <div className={d.extras.extra ? 'gold' : ''}>
+            <dt>Extra total</dt>
+            <dd>{formatRand(d.extras.total)}</dd>
+          </div>
+        </dl>
+
+        <RawLine id={id} raws={d.raws} done={done} onChange={load} />
+
+        <div className="actions">
+          {done ? (
+            <button className="btn" onClick={unlock} disabled={busy}>
+              Unlock for changes
+            </button>
+          ) : (
+            <>
+              <button className="btn" onClick={handoff}>
+                Hand this tablet to the client
+              </button>
+              <button className="btn ghost" onClick={() => setQr(true)}>
+                Show QR code
+              </button>
+            </>
+          )}
+          <button className="btn ghost more-btn" onClick={() => setMenu(true)} aria-haspopup="dialog">
+            <span aria-hidden="true">⋯</span> More
+          </button>
+        </div>
+
+        {access.info && <Devices id={id} info={access.info} onChange={access.reload} />}
+      </article>
+
+      <div className="photos-head">
         <h2>Photos</h2>
         <label className="check">
-          <input type="checkbox" checked={onlyPicked} onChange={(e) => setOnlyPicked(e.target.checked)} /> Only selected or
-          rated
+          <input type="checkbox" checked={onlyPicked} onChange={(e) => setOnlyPicked(e.target.checked)} /> Only selected or rated
         </label>
       </div>
       <div className="grid staff-grid">
@@ -166,42 +156,310 @@ export function SessionDetail({ id, onAuthLost }: { id: number; onAuthLost: (e: 
           );
         })}
       </div>
+
+      {menu && <MoreMenu session={s} raws={d.raws} onClose={() => setMenu(false)} onChanged={load} />}
+      {qr && (
+        <QrSheet
+          id={id}
+          token={s.token}
+          link={access.info?.link ?? ''}
+          onClose={() => setQr(false)}
+          onRegenerated={() => {
+            void load();
+            void access.reload();
+          }}
+        />
+      )}
     </section>
   );
 }
 
-function PackageEdit({ session, onSaved }: { session: Session; onSaved: () => void }) {
-  const [editing, setEditing] = useState(false);
+/* ---------- RAW status, one line ---------- */
+
+function RawLine({ id, raws, done, onChange }: { id: number; raws: RawStatus; done: boolean; onChange: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const [open, setOpen] = useState(false);
+  if (!raws.enabled) return <p className="raw-line muted small">RAW copies are off (no projects folder set up).</p>;
+
+  const st = raws.state;
+  const where = raws.destination ? `${raws.projectsLabel.replace(/\/+$/, '')}/${raws.destination}` : null;
+  const missing = raws.missing ?? [];
+  const problems = raws.problems ?? [];
+  const issues = missing.length + problems.length;
+
+  if (st === null) {
+    return (
+      <p className="raw-line muted small">
+        {done ? 'RAWs will be copied shortly.' : 'RAWs copy automatically when the client taps “I’m done”.'}
+      </p>
+    );
+  }
+  if (st === 'queued' || st === 'running') {
+    const pct = raws.totalFiles ? Math.round(((raws.doneFiles ?? 0) / raws.totalFiles) * 100) : 0;
+    return (
+      <div className="raw-line" aria-live="polite">
+        <span>
+          {st === 'queued' ? 'Preparing RAW copy…' : `Copying ${raws.doneFiles ?? 0} of ${raws.totalFiles ?? 0}…`}
+        </span>
+        <div className="progress-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+          <div style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    );
+  }
+  if (st === 'failed' || st === 'interrupted') {
+    return (
+      <div className="raw-line">
+        <span className="error">{raws.message}</span>
+        <button
+          className="text-btn"
+          onClick={async () => {
+            await api(`/api/staff/sessions/${id}/raws`, { method: 'POST' }).catch((e) => alert(e.message));
+            onChange();
+          }}
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="raw-line">
+      <span className="raw-ready">
+        RAWs ready <span aria-hidden="true">✓</span>
+        {issues > 0 && (
+          <button className="text-btn warn" onClick={() => setOpen(!open)} aria-expanded={open}>
+            {missing.length > 0 && `${missing.length} without a RAW`}
+            {missing.length > 0 && problems.length > 0 && ' · '}
+            {problems.length > 0 && `${problems.length} not copied`} {open ? '▴' : '▾'}
+          </button>
+        )}
+      </span>
+      {where && (
+        <span className="raw-path">
+          <span className="mono">{where}</span>
+          <button
+            className="text-btn"
+            onClick={async () => {
+              setCopied(await copyText(where));
+              setTimeout(() => setCopied(false), 2000);
+            }}
+          >
+            {copied ? 'Copied' : 'Copy path'}
+          </button>
+        </span>
+      )}
+      {open && (
+        <ul className="raw-issues mono small">
+          {missing.map((m) => (
+            <li key={m}>{m} · no RAW found</li>
+          ))}
+          {problems.map((p) => (
+            <li key={p} className="error">
+              {p}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/* ---------- the ⋯ More menu ---------- */
+
+type View = 'menu' | 'copy' | 'edit' | 'reset' | 'delete';
+
+function MoreMenu({
+  session,
+  raws,
+  onClose,
+  onChanged,
+}: {
+  session: Session;
+  raws: RawStatus;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [view, setView] = useState<View>('menu');
+  const [busy, setBusy] = useState(false);
+  const id = session.id;
+  const rawBusy = raws.state === 'queued' || raws.state === 'running';
+
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') view === 'menu' ? onClose() : setView('menu');
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [view, onClose]);
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    await fn().catch((e) => alert(e.message));
+    setBusy(false);
+  };
+
+  const title: Record<View, string> = {
+    menu: 'More',
+    copy: 'Copy list for Capture One',
+    edit: 'Package & price',
+    reset: 'Reset selections?',
+    delete: 'Delete this session?',
+  };
+
+  return createPortal(
+    <div className="modal-back sheet-back" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title[view]}>
+        <header className="sheet-head">
+          {view !== 'menu' ? (
+            <button className="text-btn" onClick={() => setView('menu')}>
+              ‹ Back
+            </button>
+          ) : (
+            <span />
+          )}
+          <h2>{title[view]}</h2>
+          <button className="text-btn" onClick={onClose} aria-label="Close">
+            Close
+          </button>
+        </header>
+
+        {view === 'menu' && (
+          <ul className="menu">
+            <li>
+              <button className="menu-item" onClick={() => setView('copy')}>
+                Copy list for Capture One <span aria-hidden="true">›</span>
+              </button>
+            </li>
+            <li>
+              <button
+                className="menu-item"
+                disabled={!raws.enabled || rawBusy || busy}
+                onClick={() =>
+                  run(async () => {
+                    await api(`/api/staff/sessions/${id}/raws`, { method: 'POST' });
+                    onChanged();
+                    onClose();
+                  })
+                }
+              >
+                Re-copy RAWs
+              </button>
+            </li>
+            <li>
+              <a className="menu-item" href={`/api/staff/sessions/${id}/export.csv`} download onClick={() => setTimeout(onClose, 300)}>
+                Export CSV
+              </a>
+            </li>
+            <li>
+              <button className="menu-item" onClick={() => setView('edit')}>
+                Package & price <span aria-hidden="true">›</span>
+              </button>
+            </li>
+            <li className="menu-sep" role="separator" />
+            <li>
+              <button className="menu-item danger" onClick={() => setView('reset')}>
+                Reset selections
+              </button>
+            </li>
+            <li>
+              <button className="menu-item danger" onClick={() => setView('delete')}>
+                Delete session
+              </button>
+            </li>
+          </ul>
+        )}
+
+        {view === 'copy' && <CopyList id={id} />}
+
+        {view === 'edit' && (
+          <PackageForm
+            session={session}
+            onSaved={() => {
+              onChanged();
+              setView('menu');
+            }}
+          />
+        )}
+
+        {view === 'reset' && (
+          <div className="confirm-box">
+            <p>All hearts and stars for {session.clientName} will be cleared. Photos are not affected.</p>
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={() => setView('menu')}>
+                Cancel
+              </button>
+              <button
+                className="btn danger-solid"
+                disabled={busy}
+                onClick={() =>
+                  run(async () => {
+                    await api(`/api/staff/sessions/${id}/reset`, { method: 'POST' });
+                    onChanged();
+                    onClose();
+                  })
+                }
+              >
+                Reset selections
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view === 'delete' && (
+          <div className="confirm-box">
+            <p>The session for {session.clientName} and its selections will be removed from the app. Photos and RAW copies are never touched.</p>
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={() => setView('menu')}>
+                Cancel
+              </button>
+              <button
+                className="btn danger-solid"
+                disabled={busy}
+                onClick={() =>
+                  run(async () => {
+                    await api(`/api/staff/sessions/${id}`, { method: 'DELETE' });
+                    navigate('/staff', true);
+                  })
+                }
+              >
+                Delete session
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function PackageForm({ session, onSaved }: { session: Session; onSaved: () => void }) {
   const [v, setV] = useState(String(session.packageSize));
   const [price, setPrice] = useState(String(session.extraPrice));
-  if (!editing)
-    return (
-      <button className="link-btn" onClick={() => setEditing(true)}>
-        Change package / price
-      </button>
-    );
   return (
     <form
-      className="inline-form"
+      className="sheet-form"
       onSubmit={async (e) => {
         e.preventDefault();
         await api(`/api/staff/sessions/${session.id}`, {
           method: 'PATCH',
           json: { packageSize: Number(v), extraPrice: price },
         }).catch((er) => alert(er.message));
-        setEditing(false);
         onSaved();
       }}
     >
-      <label className="small">
-        Included
+      <label>
+        Pictures included
         <input inputMode="numeric" value={v} onChange={(e) => setV(e.target.value.replace(/\D/g, '').slice(0, 4))} />
       </label>
-      <label className="small">
-        Extra each (R)
+      <label>
+        Price per extra picture (R)
         <input inputMode="numeric" value={price} onChange={(e) => setPrice(e.target.value.replace(/\D/g, '').slice(0, 6))} />
       </label>
-      <button className="btn gold small">Save</button>
+      <button className="btn" disabled={!Number(v) || price === ''}>
+        Save
+      </button>
     </form>
   );
 }
@@ -217,21 +475,16 @@ function CopyList({ id }: { id: number }) {
 
   useEffect(() => {
     const q = new URLSearchParams({ filter, minStars: String(minStars), ext: ext ? '1' : '0', sep: space ? 'space' : 'comma' });
-    const load = () =>
-      api<{ text: string; count: number }>(`/api/staff/sessions/${id}/copylist?${q}`)
-        .then((r) => {
-          setText(r.text);
-          setCount(r.count);
-        })
-        .catch(() => {});
-    load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    api<{ text: string; count: number }>(`/api/staff/sessions/${id}/copylist?${q}`)
+      .then((r) => {
+        setText(r.text);
+        setCount(r.count);
+      })
+      .catch(() => {});
   }, [id, filter, minStars, ext, space]);
 
   return (
-    <div className="card copy-card">
-      <h2>Copy list for Capture One</h2>
+    <div className="copy-list">
       <div className="seg">
         <button className={filter === 'hearted' ? 'on' : ''} onClick={() => setFilter('hearted')}>
           ♥ Hearted
@@ -255,103 +508,23 @@ function CopyList({ id }: { id: number }) {
       <label className="check">
         <input type="checkbox" checked={space} onChange={(e) => setSpace(e.target.checked)} /> Space after each comma
       </label>
-      <textarea readOnly value={text} rows={4} placeholder="Nothing selected yet" />
+      <textarea readOnly value={text} rows={4} placeholder="Nothing selected yet" aria-label="File names" />
       <button
-        className="btn gold"
+        className="btn"
         disabled={!text}
         onClick={async () => {
           const ok = await copyText(text);
-          setCopied(ok ? `Copied ${count} file name${count === 1 ? '' : 's'}` : 'Could not copy — select the text and copy it manually');
+          setCopied(ok ? `Copied ${count} file name${count === 1 ? '' : 's'}` : 'Could not copy. Select the text and copy it manually.');
           setTimeout(() => setCopied(''), 3000);
         }}
       >
         Copy list ({count})
       </button>
-      {copied && <p className="muted small">{copied}</p>}
-    </div>
-  );
-}
-
-const mb = (n = 0) => (n / 1024 / 1024).toFixed(n > 10 * 1024 * 1024 ? 0 : 1);
-
-function RawCard({ id, raws, onChange }: { id: number; raws: RawStatus; onChange: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const [showMissing, setShowMissing] = useState(false);
-  if (!raws.enabled) {
-    return (
-      <div className="card">
-        <h2>RAW project folder</h2>
-        <p className="muted small">Off: no projects folder is set up. Add PROJECTS_PATH to the .env file and redeploy (see README).</p>
-      </div>
-    );
-  }
-  const st = raws.state;
-  const active = st === 'queued' || st === 'running';
-  const pct = raws.totalBytes ? Math.round(((raws.doneBytes ?? 0) / raws.totalBytes) * 100) : active ? 0 : 100;
-  const where = raws.destination ? `${raws.projectsLabel.replace(/\/+$/, '')}/${raws.destination}` : null;
-  const missing = raws.missing ?? [];
-  const problems = raws.problems ?? [];
-
-  return (
-    <div className="card raw-card">
-      <h2>RAW project folder</h2>
-      {st === null && <p className="muted small">RAWs are copied automatically when the client taps “I’m done”.</p>}
-      {st === 'queued' && <p>Waiting to start…</p>}
-      {st === 'running' && (
-        <p>
-          Copying RAWs… {raws.doneFiles ?? 0} of {raws.totalFiles ?? 0} ({mb(raws.doneBytes)} of {mb(raws.totalBytes)} MB)
+      {copied && (
+        <p className="muted small" role="status">
+          {copied}
         </p>
       )}
-      {(st === 'done' || st === 'done_with_issues') && (
-        <p>
-          <span className={`chip ${st === 'done' ? 'done' : 'warn'}`}>{st === 'done' ? 'Done' : 'Done – check below'}</span>{' '}
-          {raws.copied} copied{raws.alreadyThere ? `, ${raws.alreadyThere} already there` : ''}.
-        </p>
-      )}
-      {(st === 'failed' || st === 'interrupted') && <p className="error">{raws.message}</p>}
-      {(active || st === 'done' || st === 'done_with_issues') && (
-        <div className="progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-          <div style={{ width: `${pct}%` }} />
-        </div>
-      )}
-      {where && (
-        <p className="muted small">
-          Folder: <span className="mono">{where}</span>
-        </p>
-      )}
-      {missing.length > 0 && (
-        <div className="raw-missing">
-          <button className="link-btn" onClick={() => setShowMissing(!showMissing)}>
-            {missing.length} selected photo{missing.length === 1 ? '' : 's'} with no RAW found {showMissing ? '▴' : '▾'}
-          </button>
-          {showMissing && <ul className="mono small">{missing.map((m) => <li key={m}>{m}</li>)}</ul>}
-        </div>
-      )}
-      {problems.length > 0 && (
-        <ul className="error small">
-          {problems.map((p) => (
-            <li key={p}>{p}</li>
-          ))}
-        </ul>
-      )}
-      {(raws.multipleMatches?.length ?? 0) > 0 && (
-        <p className="muted small">
-          {raws.multipleMatches!.length} photo(s) had more than one RAW with the same name; the one next to the JPEG was used.
-        </p>
-      )}
-      <button
-        className="btn ghost"
-        disabled={busy || active}
-        onClick={async () => {
-          setBusy(true);
-          await api(`/api/staff/sessions/${id}/raws`, { method: 'POST' }).catch((e) => alert(e.message));
-          setBusy(false);
-          onChange();
-        }}
-      >
-        {st === null ? 'Copy RAWs now' : 'Re-copy RAWs'}
-      </button>
-      <p className="muted small">Adds newly selected photos. Nothing is overwritten or deleted.</p>
     </div>
   );
 }

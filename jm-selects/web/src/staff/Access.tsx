@@ -12,13 +12,6 @@ interface Device {
   revoked: boolean;
   online: boolean;
 }
-interface AccessInfo {
-  link: string;
-  joinFailures: number;
-  locked: boolean;
-  maxJoinAttempts: number;
-  devices: Device[];
-}
 interface WifiInfo {
   configured: boolean;
   ssid: string;
@@ -33,21 +26,17 @@ export function useWifi() {
   return wifi;
 }
 
-/** The two ways to hand over a session, plus who is connected. */
-export function HandoverCard({
-  id,
-  token,
-  onHandoff,
-  onTokenChanged,
-}: {
-  id: number;
-  token: string;
-  onHandoff: () => void;
-  onTokenChanged: () => void;
-}) {
-  const [showQr, setShowQr] = useState(false);
-  const [info, setInfo] = useState<AccessInfo | null>(null);
+export interface AccessInfo {
+  link: string;
+  joinFailures: number;
+  locked: boolean;
+  maxJoinAttempts: number;
+  devices: Device[];
+}
 
+/** Who is connected to a session, refreshed every few seconds. */
+export function useAccessInfo(id: number, token: string) {
+  const [info, setInfo] = useState<AccessInfo | null>(null);
   const load = useCallback(
     () =>
       api<AccessInfo>(`/api/staff/sessions/${id}/access`)
@@ -60,87 +49,71 @@ export function HandoverCard({
     const t = setInterval(load, 4000);
     return () => clearInterval(t);
   }, [load, token]);
+  return { info, reload: load };
+}
 
-  const active = info?.devices.filter((d) => !d.revoked) ?? [];
-
+/** Compact list of connected phones/tablets, each removable after a confirm. */
+export function Devices({ id, info, onChange }: { id: number; info: AccessInfo; onChange: () => void }) {
+  const [confirming, setConfirming] = useState<number | null>(null);
+  const active = info.devices.filter((d) => !d.revoked);
   return (
-    <div className="card handover">
-      <h2>Client</h2>
-      <p className="muted small">Choose how the client views their photos. They only ever see this session.</p>
-      <div className="btn-col">
-        <button className="btn gold" onClick={onHandoff}>
-          Hand this tablet to the client
-        </button>
-        <button className="btn ghost" onClick={() => setShowQr(true)}>
-          Show QR code
-        </button>
-      </div>
-
-      {info?.locked && (
+    <div className="devices">
+      {info.locked && (
         <div className="notice">
-          <p className="small">
-            Locked after {info.maxJoinAttempts} names that didn’t match. Check the client name above is their full name, then:
-          </p>
+          <span className="small">Locked after {info.maxJoinAttempts} names that didn’t match.</span>
           <button
             className="btn small"
             onClick={async () => {
               await api(`/api/staff/sessions/${id}/reset-attempts`, { method: 'POST' });
-              void load();
+              onChange();
             }}
           >
             Allow new attempts
           </button>
         </div>
       )}
-
-      <div className="devices">
-        <span className="eyebrow">Connected devices</span>
-        {active.length === 0 ? (
-          <p className="muted small">None yet.</p>
-        ) : (
+      {active.length > 0 && (
+        <>
+          <span className="eyebrow">Connected</span>
           <ul>
             {active.map((d) => (
               <li key={d.id}>
                 <span className={`dot-online ${d.online ? 'on' : ''}`} aria-label={d.online ? 'Online now' : 'Not open now'} />
                 <span className="device-name">
                   {d.label}
-                  <span className="muted small">
-                    {d.via === 'tablet' ? ' · handed over' : ' · confirmed name'} · {d.online ? 'online now' : `seen ${fmtTime(d.lastSeen)}`}
-                  </span>
+                  <span className="muted small"> · {d.online ? 'online' : `seen ${fmtTime(d.lastSeen)}`}</span>
                 </span>
-                <button
-                  className="link-btn danger-link"
-                  onClick={async () => {
-                    if (!confirm(`Remove access for this ${d.label}?`)) return;
-                    await api(`/api/staff/sessions/${id}/devices/${d.id}/revoke`, { method: 'POST' });
-                    void load();
-                  }}
-                >
-                  Remove
-                </button>
+                {confirming === d.id ? (
+                  <span className="inline-confirm">
+                    <button className="text-btn" onClick={() => setConfirming(null)}>
+                      Keep
+                    </button>
+                    <button
+                      className="text-btn danger"
+                      onClick={async () => {
+                        await api(`/api/staff/sessions/${id}/devices/${d.id}/revoke`, { method: 'POST' });
+                        setConfirming(null);
+                        onChange();
+                      }}
+                    >
+                      Remove access
+                    </button>
+                  </span>
+                ) : (
+                  <button className="text-btn" onClick={() => setConfirming(d.id)} aria-label={`Remove ${d.label}`}>
+                    Remove
+                  </button>
+                )}
               </li>
             ))}
           </ul>
-        )}
-      </div>
-
-      {showQr && (
-        <QrSheet
-          id={id}
-          token={token}
-          link={info?.link ?? ''}
-          onClose={() => setShowQr(false)}
-          onRegenerated={() => {
-            onTokenChanged();
-            void load();
-          }}
-        />
+        </>
       )}
     </div>
   );
 }
 
-function QrSheet({
+export function QrSheet({
   id,
   token,
   link,
@@ -155,6 +128,7 @@ function QrSheet({
 }) {
   const wifi = useWifi();
   const [busy, setBusy] = useState(false);
+  const [confirmNew, setConfirmNew] = useState(false);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -193,24 +167,38 @@ function QrSheet({
           </section>
         </div>
         {link && <p className="mono small qr-link">{link}</p>}
-        <div className="modal-actions">
-          <button
-            className="btn ghost small"
-            disabled={busy}
-            onClick={async () => {
-              if (!confirm('Make a new QR code? The old link and code stop working, and phones already connected will need to scan again.')) return;
-              setBusy(true);
-              await api(`/api/staff/sessions/${id}/regenerate`, { method: 'POST' }).catch((e) => alert(e.message));
-              setBusy(false);
-              onRegenerated();
-            }}
-          >
-            New QR code
-          </button>
-          <button className="btn small" onClick={onClose}>
-            Done
-          </button>
-        </div>
+        {confirmNew ? (
+          <div className="confirm-box">
+            <p>Make a new code? The old one stops working and connected phones must scan again.</p>
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={() => setConfirmNew(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  await api(`/api/staff/sessions/${id}/regenerate`, { method: 'POST' }).catch((e) => alert(e.message));
+                  setBusy(false);
+                  setConfirmNew(false);
+                  onRegenerated();
+                }}
+              >
+                Make new code
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => setConfirmNew(true)}>
+              New QR code
+            </button>
+            <button className="btn" onClick={onClose}>
+              Done
+            </button>
+          </div>
+        )}
       </div>
     </div>,
     document.body,
